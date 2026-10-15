@@ -56,6 +56,7 @@ def main():
         result = subprocess.run(["docker", "run", "--rm", "--user", "0", "--network", f"container:{mysql_id}",
              "--mount", f"type=bind,source={source_root / 'tests'},target=/opt/tiktok-shop-monitor/tests,readonly",
              "--mount", f"type=bind,source={source_root / 'deployment'},target=/opt/tiktok-shop-monitor/deployment,readonly",
+             "--mount", f"type=bind,source={source_root / 'docs'},target=/opt/tiktok-shop-monitor/docs,readonly",
              *app_mount,
              "--env", "MYSQL_TEST_URL", "--env", "REDIS_TEST_URL", args.image, "sh", "-c",
              "python -m pip install --quiet 'pytest>=8,<9' && " + shlex.join(["python", "-m", "pytest", "-q", *args.test_path])], env=environment, capture_output=True, text=True)
