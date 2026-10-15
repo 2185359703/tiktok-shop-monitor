@@ -14,6 +14,7 @@ from app.models import (
     SeedType, Shop, ShopSeedLink, TaskStatus, TaskType,
 )
 from app.services.seed_importer import fingerprint, seed_task_key
+from app.services.shop_profile import ensure_shop_profile_task, shop_profile_window
 
 
 def normalized_name(value: str) -> str:
@@ -156,5 +157,7 @@ def resolve_seed_from_snapshot(
     if not managed:
         finish_identity_task(session, task, snapshot, evidence_path, success=True)
     created = ensure_product_discovery_task(session, shop, snapshot.final_url, datetime.now(timezone.utc))
+    if shop.canonical_url and shop_id_from_url(shop.canonical_url) == shop.platform_shop_id:
+        ensure_shop_profile_task(session, shop, shop_profile_window(datetime.now(timezone.utc), 86400))
     session.flush()
     return "resolved", created

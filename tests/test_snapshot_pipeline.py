@@ -11,6 +11,8 @@ from sqlalchemy import delete, func, select
 from app.crawlers.product_detail import DetailSnapshot
 from app.main import create_app
 from app.models import ChangeEvent, ChangeEventType, CrawlAttempt, CrawlTask, Product, ProductSnapshot, ProductVariant, Shop, StockStatus, TaskStatus, TaskType, VariantSnapshot
+from app.models.product_content import ProductContent
+from app.models.product_image import ProductImage
 from app.observability.metrics import Metrics
 from app.queue.contracts import TaskMessage
 from app.queue.retry_policy import TaskFailure
@@ -260,6 +262,8 @@ def committed_snapshot_data(mysql_engine):
         db.execute(delete(ChangeEvent).where(ChangeEvent.product_id == product_id))
         db.execute(delete(VariantSnapshot).where(VariantSnapshot.product_id == product_id))
         db.execute(delete(ProductSnapshot).where(ProductSnapshot.product_id == product_id))
+        db.execute(delete(ProductContent).where(ProductContent.product_id == product_id))
+        db.execute(delete(ProductImage).where(ProductImage.product_id == product_id))
         db.execute(delete(ProductVariant).where(ProductVariant.product_id == product_id))
         db.execute(delete(Product).where(Product.id == product_id))
         db.execute(delete(CrawlAttempt).where(CrawlAttempt.task_id.in_(task_ids)))

@@ -1,7 +1,9 @@
 """Freeze a secret-free, hash-checked source release for frontend deployment."""
 
+import argparse
 import hashlib
 import json
+import re
 import shutil
 import stat
 import tarfile
@@ -11,9 +13,11 @@ from uuid import uuid4
 
 
 ROOT = Path(__file__).resolve().parents[1]
-EXTENSIONS = {".py", ".js", ".css", ".html", ".toml", ".sql", ".yml", ".yaml", ".md", ".txt", ".woff2", ".ps1"}
+EXTENSIONS = {".py", ".js", ".css", ".html", ".toml", ".sql", ".yml", ".yaml", ".md", ".txt", ".woff2", ".ps1",
+              ".png", ".svg", ".ico", ".jpg", ".jpeg", ".webp"}
 DIRECTORIES = ("app", "scripts", "configs", "migrations", "monitoring", "tests", "deployment", "docs", "data/seed")
-ROOT_FILES = ("Dockerfile", ".dockerignore", "requirements.txt", "pyproject.toml", "main.py", "README.md")
+ROOT_FILES = ("Dockerfile", ".dockerignore", "requirements.txt", "pyproject.toml", "main.py", "README.md",
+              "data/seed/shop_replacements_20261013.json")
 
 
 def fingerprint(path):
@@ -26,12 +30,24 @@ def source_files():
         for path in (ROOT / folder).rglob("*"):
             if "__pycache__" in path.parts or not path.is_file():
                 continue
-            if path.suffix in EXTENSIONS or (folder == "data/seed" and path.suffix == ".csv") or path.name.startswith("Dockerfile"):
+            if path.suffix in EXTENSIONS or (folder == "data/seed" and path.suffix == ".csv") or (folder == "tests" and path.suffix == ".json") or path.name.startswith("Dockerfile"):
                 paths.append(path)
     return sorted(set(paths))
 
 
 def main():
+    global ROOT
+    workspace = ROOT
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--release-id")
+    parser.add_argument("--source-root", type=Path)
+    args = parser.parse_args()
+    if args.source_root:
+        ROOT = args.source_root.resolve()
+        if not ROOT.is_relative_to(workspace) or not (ROOT / "Dockerfile").is_file():
+            raise ValueError("发布源码必须位于本项目内并包含Dockerfile。")
+    if args.release_id and not re.fullmatch(r"frontend-[a-z0-9-]{1,54}", args.release_id):
+        raise ValueError("发布名称只能使用frontend-前缀、小写字母、数字和连字符。")
     files = source_files()
     before = {}
     for path in files:
@@ -39,8 +55,8 @@ def main():
         if path.is_symlink() or info.st_nlink > 1 or getattr(info, "st_file_attributes", 0) & stat.FILE_ATTRIBUTE_REPARSE_POINT:
             raise ValueError("发布文件不能来自链接或重解析路径。")
         before[path] = fingerprint(path)
-    release_id = "frontend-" + datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ-") + uuid4().hex[:8]
-    parent = ROOT / "data/samples/deployment"
+    release_id = args.release_id or "frontend-" + datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ-") + uuid4().hex[:8]
+    parent = workspace / "data/samples/deployment"
     directory = parent / "releases" / release_id
     directory.mkdir(parents=True, exist_ok=False)
     manifest = []

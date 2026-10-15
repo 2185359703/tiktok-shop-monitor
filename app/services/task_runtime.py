@@ -41,6 +41,7 @@ class ExecutionResult:
     apply: Callable[[Session, CrawlTask], None] | None = None
     checkpoint: dict[str, Any] | None = None
     request_url: str | None = None
+    request_method: str = "GET"
     response_status: int | None = None
     response_bytes: int | None = None
     response_hash: str | None = None
@@ -108,7 +109,7 @@ def finalize_task(session: Session, lease: TaskLease, settings: Settings, *, res
         task.status, task.last_error = TaskStatus.SUCCEEDED, None
         if result.checkpoint is not None:
             task.checkpoint = dict(result.checkpoint)
-        for field in ("request_url", "response_status", "response_bytes", "response_hash", "latency_ms", "evidence_path"):
+        for field in ("request_url", "request_method", "response_status", "response_bytes", "response_hash", "latency_ms", "evidence_path"):
             setattr(attempt, field, getattr(result, field))
         attempt.succeeded = True
     else:

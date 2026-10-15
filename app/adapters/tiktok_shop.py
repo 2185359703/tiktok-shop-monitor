@@ -3,6 +3,7 @@ from threading import Event
 from app.crawlers.public_shop import PublicShopClient
 from app.crawlers.product_list import ProductPageClient
 from app.crawlers.product_detail import ProductDetailClient
+from app.crawlers.shop_profile import ShopProfileClient
 
 
 class TikTokShopAdapter:
@@ -27,3 +28,8 @@ class TikTokShopAdapter:
                                  http_proxy=self.settings.detail_proxy_url,
                                  before_request=lambda: self.gate.wait_turn(stop)) as client:
             return client.fetch_detail(source_url, expected_shop_id)
+
+    def fetch_shop_profile(self, source_url, stop: Event):
+        with ShopProfileClient(interval=0, max_attempts=1,
+                               before_request=lambda: self.gate.wait_turn(stop)) as client:
+            return client.fetch_profile(source_url)

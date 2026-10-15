@@ -135,6 +135,10 @@ def detect_snapshot_changes(session, task):
         statement = insert(ChangeEvent).values(rows)
         session.execute(statement.on_duplicate_key_update(event_hash=statement.inserted.event_hash))
     session.flush()
+    from app.services.analytics_refresh import enabled, mark_events
+    if rows and enabled(session):
+        mark_events(session, session.scalars(select(ChangeEvent.id).where(
+            ChangeEvent.event_hash.in_([row["event_hash"] for row in rows]))).all())
     return {"snapshot_id": str(current.id), "previous_snapshot_id": str(previous.id) if previous else None,
             "baseline": previous is None, "comparison_skipped": previous is not None and not compatible(previous, current),
             "events_detected": len(rows), "events_written": len(rows) - len(existing)}

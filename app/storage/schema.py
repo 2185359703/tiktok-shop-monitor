@@ -76,7 +76,9 @@ def mysql_ddl(database_name: str = DEFAULT_DATABASE, *, table_names: Iterable[st
             str(CreateIndex(index).compile(dialect=mysql)).strip() + ";"
             for index in sorted(table.indexes, key=lambda item: item.name or "")
         )
-    return "\n\n".join(statements) + "\n"
+    # SQLAlchemy may leave spaces after column separators. Keep generated files
+    # stable and diff-friendly without changing any SQL tokens or definitions.
+    return "\n".join(line.rstrip() for line in "\n\n".join(statements).splitlines()) + "\n"
 
 
 def comment_literal(value: str, mysql_dialect) -> str:

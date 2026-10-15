@@ -49,8 +49,10 @@ class ChangeEventType(StrEnum):
 
 class TaskType(StrEnum):
     SHOP_DISCOVERY = "shop_discovery"
+    SHOP_PROFILE = "shop_profile"
     PRODUCT_DISCOVERY = "product_discovery"
     PRODUCT_DETAIL = "product_detail"
+    PRODUCT_REVIEWS = "product_reviews"
     PRODUCT_SNAPSHOT = "product_snapshot"
     CHANGE_DETECTION = "change_detection"
     REPORT_GENERATION = "report_generation"

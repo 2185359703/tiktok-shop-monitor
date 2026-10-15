@@ -1,6 +1,7 @@
 """Import this package before accessing Base.metadata so all tables are registered."""
 
 from .base import Base
+from .analytics_read import ProductReadModel, EventReadModel, AnalyticsRefreshRequest, AnalyticsSnapshot
 from .change_event import ChangeEvent
 from .enums import (
     AvailabilityStatus, ChangeEventType, ResolutionStatus, ResourceType,
@@ -8,9 +9,12 @@ from .enums import (
 )
 from .product import Product, ProductVariant
 from .product_image import ProductImage
+from .product_content import ProductContent
+from .product_review import ProductReview
 from .matching import MatchStatus, ProductMatch, SkuMatch
 from .seed import SeedShopObservation, ShopSeedLink
 from .shop import Shop
+from .shop_profile import ShopProfileSnapshot
 from .snapshot import ProductSnapshot, VariantSnapshot
 from .task import CrawlAttempt, CrawlTask
 
@@ -21,4 +25,6 @@ __all__ = [
     "StockStatus", "AvailabilityStatus", "ChangeEventType", "TaskType",
     "ResourceType", "TaskStatus",
     "ProductImage", "ProductMatch", "SkuMatch", "MatchStatus",
+    "ProductContent", "ShopProfileSnapshot", "ProductReview",
+    "ProductReadModel", "EventReadModel", "AnalyticsRefreshRequest", "AnalyticsSnapshot",
 ]

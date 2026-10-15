@@ -5,6 +5,8 @@ from collections import Counter, defaultdict
 from sqlalchemy import and_, case, func, select
 
 from app.models import CrawlTask, Product, ProductSnapshot, ProductVariant, ResourceType, SeedShopObservation, Shop, ShopSeedLink, TaskStatus, TaskType
+from app.services.image_backfill import BACKFILL_MODES, capture_mode_expression
+from app.services.shop_profile_reporting import shop_profile_coverage
 
 
 ACTIVE = {TaskStatus.PENDING, TaskStatus.RUNNING, TaskStatus.RETRY_WAITING, TaskStatus.ABANDONED}
@@ -29,12 +31,12 @@ def owned_task_queries(seed_ids, shop_ids):
             CrawlTask.resource_type == ResourceType.PRODUCT,
             CrawlTask.resource_id == func.cast(Product.id, CrawlTask.resource_id.type),
             *market,
-        )).where(Product.shop_id.in_(shop_ids), CrawlTask.task_type.in_((
+        )).where(Product.shop_id.in_(shop_ids), capture_mode_expression().not_in(BACKFILL_MODES), CrawlTask.task_type.in_((
             TaskType.PRODUCT_DETAIL, TaskType.PRODUCT_SNAPSHOT, TaskType.CHANGE_DETECTION))),
     )
 
 
-def collection_progress(session, batch, *, require_baseline=True):
+def collection_progress(session, batch, *, require_baseline=True, profile_interval_seconds=86400):
     hashes = [row.row_hash for row in batch.rows]
     seeds = session.scalars(select(SeedShopObservation).where(SeedShopObservation.row_hash.in_(hashes))).all()
     seed_ids = [seed.id for seed in seeds]
@@ -96,6 +98,9 @@ def collection_progress(session, batch, *, require_baseline=True):
                        "pages_succeeded": pages_for_shop["succeeded"]})
     complete = sum(row["source_status"] == "source_complete" for row in stores)
     errors = [(kind, message, count) for (kind, message), count in error_groups.items()]
+    profiles = shop_profile_coverage(session, shops.values(), interval_seconds=profile_interval_seconds)
+    profiles["unresolved_seed_observations"] = len(batch.rows) - len(links)
+    profiles["full_coverage"] = profiles["full_coverage"] and profiles["unresolved_seed_observations"] == 0
     return {"target_shops": len(batch.rows), "seed_observations": len(seeds), "resolved_shops": len(shop_ids),
             "source_complete_shops": complete, "products": products, "details_completed": details,
             "variants": variants, "baseline_products": baseline_products, "active_tasks": active, "failed_tasks": failed,
@@ -103,4 +108,4 @@ def collection_progress(session, batch, *, require_baseline=True):
                              and (not require_baseline or baseline_products == details),
             "task_counts": [{"task_type": kind.value, "status": status.value, "count": count} for kind, status, count in counts],
             "failures": [{"task_type": kind.value, "message": message, "count": count} for kind, message, count in errors],
-            "shops": stores}
+            "shop_profiles": profiles, "shops": stores}

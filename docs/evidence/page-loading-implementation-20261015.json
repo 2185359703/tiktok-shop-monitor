@@ -1,0 +1,47 @@
+{
+  "date": "2026-10-15",
+  "timezone": "Asia/Shanghai",
+  "production_deployed": false,
+  "validation_scope": "New disposable local MySQL 8.0.43 schemas and an in-memory fixture; no production writes or load test.",
+  "last_full_pytest_run": {
+    "passed": 593,
+    "skipped": 2,
+    "failed": 1,
+    "failure": "tests/test_product_detail.py::test_evidence_does_not_save_reviews_aigc_shipping_or_warehouse",
+    "note": "The failure also reproduced separately. The affected evidence-saving implementation was not edited by this performance task. Subsequent narrow changes were verified in targeted runs."
+  },
+  "targeted_runs": [
+    {"scope": "Read models, native API, statistics, schema and static frontend", "passed": 76},
+    {"scope": "Native MySQL worker, native API, session restoration and static frontend", "passed": 16},
+    {"scope": "Final indexed pending queue, read models, MySQL and generated schema", "passed": 34},
+    {"scope": "Browser query cache behavior in Node", "passed": 5}
+  ],
+  "targeted_counts_note": "Runs overlap; do not add these counts together.",
+  "verified_behaviors": [
+    "Product pagination executes a bounded SELECT without catalog COUNT, SKU join or snapshot aggregation.",
+    "Current statistics match the original builder, including currency, shop, category and unknown-price scopes.",
+    "Expired statistics keep the last successful payload while a refresh is queued.",
+    "A revision arriving during a refresh remains pending; a released lease cannot publish again.",
+    "Transactional dirty records roll back with source changes.",
+    "Event cursors bind filters, the observation window and committed publication sequence.",
+    "MySQL SELECT and lock budgets are restored before returning the connection.",
+    "Native asynchronous API and analytics worker publish and read persisted snapshots successfully.",
+    "Browser requests coalesce; one subscriber cannot cancel another and a late cancelled response cannot overwrite new data.",
+    "Product filtering displays its row before the independent statistics request changes from 202 to 200."
+  ],
+  "browser_fixture": {
+    "products": 46,
+    "shops": 2,
+    "labels": "TEST FIXTURE",
+    "paths_checked": ["/", "/shopscope/"],
+    "flows_checked": ["product pagination", "product search", "overview", "workbench theme switching", "events", "report list"],
+    "console_errors_observed": 0,
+    "full_report_requests_observed_in_these_page_flows": 0,
+    "prefix_sample": [
+      {"path": "/shopscope/api/v2/analytics/overview", "browser_duration_ms": 20, "decoded_bytes": 2554},
+      {"path": "/shopscope/api/v2/catalog/products", "browser_duration_ms": 18, "decoded_bytes": 19616},
+      {"path": "/shopscope/api/v2/catalog/stats", "browser_duration_ms": 10, "decoded_bytes": 2236}
+    ],
+    "timing_limit": "Small local fixture and single browser samples; not production p95 or a production speedup measurement."
+  }
+}

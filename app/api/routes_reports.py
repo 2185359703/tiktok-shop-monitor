@@ -1,9 +1,9 @@
 from datetime import datetime, timezone
 from pathlib import Path
-from threading import Lock
+import asyncio
 from typing import Annotated, Literal
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi import Depends, HTTPException, Query, Request
 from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import select
@@ -12,39 +12,41 @@ from app.api.routes import require_write_token
 from app.models import CrawlTask, TaskStatus, TaskType
 from app.reports.summary import build_monitoring_report
 from app.reports.exporter import render_html, render_markdown
-from app.reports.cache import ReportCache, serialize_report
+from app.reports.cache import AsyncReportCache, serialize_report
+from app.storage.async_database import app_call
 from app.services.report_service import ensure_report_task
 from app.services.snapshot_service import utc_window
 from app.services.task_runtime import database_now
 from app.storage.database import session_scope
 
 
-router = APIRouter(prefix="/api/v1/reports", tags=["reports"])
-_cache_creation_lock = Lock()
+from app.api.async_router import AsyncAPIRouter
+
+
+router = AsyncAPIRouter(prefix="/api/v1/reports", tags=["reports"])
 
 
 @router.get("/current")
-def current_report(request: Request, format: Literal["json", "html", "md"] = "json",
+async def current_report(request: Request, format: Literal["json", "html", "md"] = "json",
                    lookback_hours: Annotated[int, Query(ge=1, le=720)] = 24):
-    # Each App owns its cache, including separately created test applications.
-    # The module-level lock only protects initialization, not cached contents.
-    with _cache_creation_lock:
-        if not hasattr(request.app.state, "report_cache"):
-            request.app.state.report_cache = ReportCache()
-        cache = request.app.state.report_cache
+    if not hasattr(request.app.state, "report_cache"):
+        request.app.state.report_cache = AsyncReportCache()
+    cache = request.app.state.report_cache
     settings = request.app.state.settings
     key = settings.platform, settings.region, settings.currency, settings.pricing_context, lookback_hours
-    def build():
+    def read_report():
         with request.app.state.factory() as db:
-            report = build_monitoring_report(db, settings, lookback_hours=lookback_hours)
-        return serialize_report(report)
+            return build_monitoring_report(db, settings, lookback_hours=lookback_hours)
+    async def build():
+        report = await app_call(request, read_report)
+        return await asyncio.to_thread(serialize_report, report)
     try:
-        report = cache.get_or_build(key, build)
+        report = await cache.get_or_build(key, build)
     except Exception:
         raise HTTPException(503, "report_generation_unavailable") from None
     types = {"json": "application/json", "html": "text/html", "md": "text/markdown"}
     body = report.bodies[format]
-    def chunks():
+    async def chunks():
         for offset in range(0, len(body), 65536):
             yield body[offset:offset + 65536]
     return StreamingResponse(chunks(), media_type=types[format], headers={

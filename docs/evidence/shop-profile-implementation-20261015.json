@@ -1,0 +1,83 @@
+{
+  "scope": "local_configured_business_database",
+  "remote_deployment_performed": false,
+  "recurring_worker_started": false,
+  "migration": {
+    "executed_statements": 4,
+    "ready": true,
+    "existing_row_counts_before_and_after": {
+      "shops": 102,
+      "products": 120,
+      "product_variants": 268,
+      "crawl_tasks": 361
+    }
+  },
+  "sample": {
+    "platform_shop_id": "7495552971774921097",
+    "shop_id": "61",
+    "name": "CHOUYATOU",
+    "captured_at": "2026-10-15T17:31:47.738284+08:00",
+    "follower_count": 34872,
+    "follower_count_text": "34.8K+",
+    "sales_count": 498223,
+    "sales_count_text": "498.2K",
+    "video_count": 1391,
+    "verification_type": "blue_v",
+    "identity_label_key": "official",
+    "source_url": "https://shop.tiktok.com/us/store/chouyatou/7495552971774921097"
+  },
+  "batch": {
+    "seed_file": "data/seed/shops_us_clothing_verified.csv",
+    "started_at": "2026-10-15T17:33:32.155587+08:00",
+    "finished_at": "2026-10-15T17:42:37.976892+08:00",
+    "target_shops": 100,
+    "processed_shops": 100,
+    "succeeded": 100,
+    "complete": 100,
+    "pending_or_failed": 0,
+    "new_requests": 99,
+    "reused_same_window_sample": 1,
+    "local_report": "data/samples/shop-profile/run-b6df2b02e0b6.json",
+    "rabbitmq_used": false,
+    "redis_shared_gate_used": true,
+    "leased_worker_used": true
+  },
+  "coverage": {
+    "checked_at": "2026-10-15T17:46:40.138303+08:00",
+    "shops_with_logo": 100,
+    "shops_with_exact_followers": 100,
+    "shops_with_exact_sales": 100,
+    "shops_with_exact_videos": 100,
+    "shops_with_rating": 100,
+    "shops_with_review_count": 100,
+    "shops_with_blue_v": 28,
+    "shops_with_official_label": 28
+  },
+  "same_window_replay": {
+    "started_at": "2026-10-15T17:44:09.054617+08:00",
+    "finished_at": "2026-10-15T17:44:10.066848+08:00",
+    "tasks_before_and_after": 100,
+    "snapshots_before_and_after": 100,
+    "attempts_before_and_after": 100,
+    "new_requests": 0,
+    "local_report": "data/samples/shop-profile/run-c75ca30404d3.json"
+  },
+  "validation": {
+    "focused_regression_passed": 241,
+    "final_coverage_storage_api_regression_passed": 60,
+    "test_databases": "dedicated_disposable_local_mysql_schemas",
+    "source_api_detail_http_status": 200,
+    "source_api_history_http_status": 200,
+    "browser_widths_checked": [1440, 390],
+    "browser_logo_loaded": true,
+    "browser_js_errors": 0,
+    "drawer_horizontal_overflow": false,
+    "full_repository_run": {
+      "passed": 484,
+      "failed": 28,
+      "skipped": 2,
+      "teardown_errors": 1,
+      "scope_note": "Earlier broad run included other pre-existing uncommitted analytics, image and product-content changes; it was not a clean passing full-suite result."
+    }
+  }
+}

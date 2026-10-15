@@ -100,11 +100,21 @@ def persist_product_page(session, task: CrawlTask, snapshot: ProductPageSnapshot
                          "public_pagination": continuation.to_payload()},
             ))
             next_task_created = True
+    if (snapshot.feed.total_product_count is not None
+            and (shop.product_count_captured_at or shop.last_seen_at) <= snapshot.captured_at):
+        shop.product_count = snapshot.feed.total_product_count
+        shop.product_count_text = str(snapshot.feed.total_product_count)
+        shop.product_count_captured_at = snapshot.captured_at
+        if shop.profile_field_state is not None:
+            shop.profile_field_state = {**shop.profile_field_state, "product_count": {
+                "state": "exact", "source": "shop_info.component_data.shopInfo.on_sell_product_count",
+                "scope": "platform_on_sell_product_count", "captured_at": snapshot.captured_at.isoformat(),
+            }}
     if shop.last_seen_at <= snapshot.captured_at:
-        if snapshot.feed.total_product_count is not None:
-            shop.product_count = snapshot.feed.total_product_count
         shop.last_seen_at = snapshot.captured_at
     session.flush()
+    from app.services.analytics_refresh import mark_products
+    mark_products(session, [product.id for product in products])
     return {"new_products": len(set(identifiers) - existing_ids), "page_products": len(identifiers),
             "images_upserted": images_upserted,
             "new_detail_tasks": len(detail_keys) - len(previous_keys), "next_task_created": next_task_created,

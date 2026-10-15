@@ -6,7 +6,9 @@ currency = "USD"
 pricing_context = "public_listed"
 
 [runtime]
-enabled_task_types = ["shop_discovery", "product_discovery", "product_detail", "change_detection", "report_generation"]
+enabled_task_types = ["shop_discovery", "shop_profile", "product_discovery", "product_detail", "product_reviews", "change_detection", "report_generation"]
+# Two existing 320 MiB workers: four coroutine slots each, eight in total.
+worker_concurrency = 4
 lease_seconds = 120
 heartbeat_seconds = 15
 poll_seconds = 5
@@ -21,8 +23,14 @@ product_discovery_max_pages = 500
 snapshot_interval_seconds = 3600
 periodic_snapshots_enabled = false
 monitored_product_ids = []
+# 上线前先执行 006_shop_profiles 迁移；周期档案只扫描显式店铺名单。
+shop_profiles_enabled = false
+shop_profile_interval_seconds = 86400
+shop_profile_jitter_seconds = 300
+shop_profile_shop_ids = []
 # 首次详情请求同事务保存真实基线，不为建立基线重复请求每个商品。
 baseline_on_detail = true
+image_backfill_enabled = true
 
 [queue]
 broker_generation = "g20261015"
@@ -37,7 +45,7 @@ prefetch = 1
 detail_http_backend = "curl_cffi"
 # 单个 HTTP 200 验证页冷却该资源；401/403/429 仍暂停整个市场。
 resource_document_cooldown = true
-minimum_interval_seconds = 2.0
+minimum_interval_seconds = 1.0
 access_pause_seconds = 900
 evidence_directory = "data/samples/runtime"
 

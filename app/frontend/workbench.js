@@ -1,4 +1,6 @@
 import { money, formatDate, labels, safeUrl } from './api.js';
+import { renderScatter as scatter } from './scatter-chart.js';
+import { renderShopPicker } from './shop-picker.js';
 
 const esc=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const num=v=>v==null?'—':new Intl.NumberFormat('zh-CN').format(v);
@@ -32,44 +34,6 @@ function donut(rows,{labelKey='label',countKey='count',action=''}={}) {
   const circumference=2*Math.PI*62;let offset=0;
   const arcs=rows.map((r,i)=>{const length=r[countKey]/total*circumference,start=offset;offset+=length;return `<circle cx="90" cy="90" r="62" stroke="${palette[i%palette.length]}" stroke-width="18" fill="none" stroke-dasharray="${length} ${circumference}" stroke-dashoffset="${-start}" transform="rotate(-90 90 90)"><title>${esc(r[labelKey])} ${num(r[countKey])} · ${(r[countKey]/total*100).toFixed(1)}%</title></circle>`;}).join('');
   return `<div class="wb-donut-layout"><svg class="wb-donut" viewBox="0 0 180 180" role="img" aria-label="${esc(rows.map(r=>`${r[labelKey]} ${r[countKey]}`).join('，'))}">${arcs}<text x="90" y="88" text-anchor="middle" fill="#26324a" font-size="24" font-weight="600">${num(total)}</text><text x="90" y="108" text-anchor="middle" fill="#8793a8" font-size="10">当前商品样本</text></svg><div class="wb-legend">${rows.map((r,i)=>`<button class="wb-legend-row" ${action?`data-wb-drill="${action}" data-value="${esc(r.status||'')}"`: 'disabled'}><span class="wb-legend-dot" style="background:${palette[i%palette.length]}"></span><span>${esc(r[labelKey])}</span><strong>${num(r[countKey])}</strong><small>${(r[countKey]/total*100).toFixed(1)}%</small></button>`).join('')}</div></div>`;
-}
-function niceStep(range,divisions=5) {
-  const raw=Math.max(range,0.01)/divisions,base=10**Math.floor(Math.log10(raw));
-  return ([1,2,2.5,5,10].find(step=>step*base>=raw-1e-9)||10)*base;
-}
-function scatter(data) {
-  const points=(data.price_rating_scatter?.points||[]).filter(p=>p.rating!=null&&p.price_min!=null&&String(p.price_min).trim()&&Number.isFinite(Number(p.rating))&&Number.isFinite(Number(p.price_min))&&Number(p.rating)>=0&&Number(p.rating)<=5&&Number(p.price_min)>=0);
-  const currency=data.scope?.currency||'USD';
-  if(!points.length)return tinyEmpty('暂无价格与评分数据','只展示价格和评分均已知的商品。');
-  const width=380,height=232,left=47,right=14,top=19,bottom=37,plotWidth=width-left-right,plotHeight=height-top-bottom;
-  const ratings=points.map(p=>Number(p.rating)),minRating=Math.min(...ratings),maxRating=Math.max(...ratings);
-  const ratingStep=niceStep(Math.max(.2,maxRating-minRating+.16));
-  const domainMin=Math.max(0,Math.floor((minRating-.08+1e-9)/ratingStep)*ratingStep),domainMax=Math.min(5,Math.ceil((maxRating+.08-1e-9)/ratingStep)*ratingStep);
-  const priceStep=niceStep(Math.max(1,...points.map(p=>Number(p.price_min)))*1.08,4),priceMax=Math.ceil(Math.max(1,...points.map(p=>Number(p.price_min)))*1.08/priceStep)*priceStep;
-  const ratingSpan=domainMax-domainMin||.2;
-  const xTicks=Array.from({length:Math.floor(ratingSpan/ratingStep+1e-8)+1},(_,i)=>Number((domainMin+i*ratingStep).toFixed(2)));
-  if(xTicks.at(-1)<domainMax-1e-8)xTicks.push(domainMax);
-  const yTicks=Array.from({length:Math.round(priceMax/priceStep)+1},(_,i)=>i*priceStep);
-  const guides=yTicks.map(value=>{const y=top+(1-value/priceMax)*plotHeight;return `<line x1="${left}" x2="${width-right}" y1="${y}" y2="${y}" stroke="#edf0f6"/><text x="${left-8}" y="${y+4}" fill="#8793a6" font-size="10" text-anchor="end">${money(value,currency).replace(/^US/,'').replace(/\.00$/,'')}</text>`;}).join('');
-  const axis=xTicks.map(value=>`<text x="${left+(value-domainMin)/ratingSpan*plotWidth}" y="${height-17}" text-anchor="middle" font-size="10" fill="#8793a6">${Number(value.toFixed(2))}</text>`).join('');
-  const unique=[...new Set(ratings)].sort((a,b)=>a-b),minGap=unique.length>1?Math.min(...unique.slice(1).map((v,i)=>v-unique[i])):ratingSpan;
-  const spread=Math.min(6,minGap/ratingSpan*plotWidth*.24),offsets=[0,-spread,spread,-spread/2,spread/2];
-  const placed=[];
-  const ordered=[...points].sort((a,b)=>Number(a.price_min)-Number(b.price_min)||String(a.id).localeCompare(String(b.id),'en',{numeric:true}));
-  const circles=ordered.map(p=>{
-    const anchor=left+(Number(p.rating)-domainMin)/ratingSpan*plotWidth,y=top+(1-Number(p.price_min)/priceMax)*plotHeight;
-    const radius=Math.min(5.1,3.1+Math.log10(Math.max(0,Number(p.review_count)||0)+1)*.55);
-    let x=anchor,best=Infinity;
-    for(const offset of offsets){const candidate=Math.max(left,Math.min(width-right,anchor+offset));let cost=Math.abs(offset)*.025;
-      for(const prev of placed){if(Math.abs(prev.y-y)>prev.r+radius+1)continue;const distance=Math.hypot(prev.x-candidate,prev.y-y),overlap=Math.max(0,prev.r+radius+.8-distance);cost+=overlap*overlap;}
-      if(cost<best){best=cost;x=candidate;}}
-    placed.push({x,y,r:radius});
-    const title=`${String(p.title||'商品 '+p.id).slice(0,90)}\n评分 ${p.rating} · ${money(p.price_min,currency)} · ${num(p.review_count)} 条评价`;
-    return `<circle class="wb-scatter-point" cx="${x.toFixed(2)}" cy="${y.toFixed(2)}" r="${radius.toFixed(2)}" fill="#3765ef" opacity=".55" stroke="white" stroke-width=".85" data-action="product" data-id="${esc(p.id)}" data-rating="${esc(p.rating)}" data-price="${esc(p.price_min)}" data-anchor-x="${anchor.toFixed(2)}" role="button" tabindex="0" aria-label="${esc(title)}"><title>${esc(title)}</title></circle>`;
-  }).join('');
-  const extent=`评分 ${Number(domainMin.toFixed(2))} 至 ${Number(domainMax.toFixed(2))}`;
-  const limited=data.price_rating_scatter?.truncated?`<span class="wb-chart-sample">${num(data.price_rating_scatter.returned_count)} / ${num(data.price_rating_scatter.eligible_count)}</span>`:'';
-  return `${limited}<svg class="wb-scatter" viewBox="0 0 ${width} ${height}" data-domain-min="${domainMin}" data-domain-max="${domainMax}" role="img" aria-label="价格与评分分布，${esc(extent)}，共 ${points.length} 件商品"><title>${esc(extent)}，价格为公开起价。悬停查看真实数值，点击查看商品。</title>${guides}${axis}${circles}<text x="${left+plotWidth/2}" y="${height+2}" text-anchor="middle" fill="#8793a6" font-size="10">评分</text></svg>`;
 }
 
 function heatmap(matrix) {
@@ -108,13 +72,16 @@ function matchingCards(state,data) {
   return `<div class="wb-relation-summary"><span class="wb-scope-tag">全市场</span><span><strong>${num(m.confirmed_product_pairs)}</strong> 对同款</span><span><strong>${num(m.confirmed_sku_pairs)}</strong> 对 SKU</span><a class="button" href="#matches">管理匹配 →</a></div>`+card(state,'matches','同规格公开价差','全市场已确认关系；不随工作台商品筛选改变。只计算当前规格、币种和价格口径均一致的 SKU。',table,`${num(valid.length)} 对已载入可比规格；${num(sku.length-valid.length)} 对暂不满足报价或规格口径。`,true);
 }
 export function renderWorkbench(state,{shops=[],icon=()=>''}={}) {
-  if(state.loading&&!state.data)return '<div class="loading-state"><span class="loader"></span><h2>正在聚合工作台数据</h2><p>从商品、规格、历史和变化观察建立分析维度…</p></div>';
-  if(state.error&&!state.data)return `<div class="panel error-state"><h2>分析数据暂不可用</h2><p>${esc(state.error.message)}</p><button class="button" data-action="refresh">重新读取</button></div>`;
-  const d=state.data;if(!d)return tinyEmpty('等待分析数据','刷新后读取当前市场的已采集观察。');
-  const f=state.filters,categories=state.categoryOptions.length?state.categoryOptions:d.categories||[],shopOptions=shops.length?shops:d.shops;
-  const filters=`<div class="wb-toolbar"><label class="wb-search">${icon('search')}<input id="wb-query" data-wb-filter="q" value="${esc(f.q||'')}" placeholder="搜索商品或品牌" aria-label="工作台商品搜索" maxlength="200" autocomplete="off"></label><select data-wb-filter="shop_id" aria-label="工作台店铺筛选"><option value="">全部店铺</option>${(shopOptions||[]).map(s=>`<option value="${esc(s.id)}" ${String(f.shop_id)===String(s.id)?'selected':''}>${esc(s.name)}</option>`).join('')}</select><select data-wb-filter="category" aria-label="工作台类目筛选"><option value="">全部公开类目</option>${categories.map(c=>`<option value="${esc(c.category)}" ${f.category===c.category?'selected':''}>${esc(c.category==='unknown'?'类目未知':c.category)}</option>`).join('')}</select>${f.q||f.category||f.shop_id?'<button class="wb-inline-button" data-wb-action="clear">清除筛选</button>':''}<div class="wb-customize"><details><summary class="button">${icon('columns')}图表设置</summary><div class="wb-customize-menu"><span>选择要显示的模块</span>${Object.entries(panelNames).map(([key,title])=>`<label><input type="checkbox" data-wb-panel="${key}" ${visible(state,key)?'checked':''}>${title}</label>`).join('')}</div></details></div></div>`;
-  const context=`<div class="wb-context"><span class="wb-coverage-pill">${num(d.summary.products)} 件商品 · 完整筛选范围</span><span>${esc(d.scope.currency)} · 当前最新公开报价</span><span>更新于 ${esc(formatDate(d.generated_at))}</span>${state.loading?'<span>正在更新…</span>':''}</div>`;
+  const d=state.data,f=state.filters,categories=state.categoryOptions.length?state.categoryOptions:d?.categories||[],shopOptions=shops.length?shops:d?.shops||[];
+  const selectedShop=shopOptions.find(s=>String(s.id)===String(f.shop_id)),scopeLabel=f.shop_id?selectedShop?.name||selectedShop?.canonical_name||`店铺 ${f.shop_id}`:'全部店铺';
+  const filters=`<div class="wb-toolbar"><label class="wb-search">${icon('search')}<input id="wb-query" data-wb-filter="q" value="${esc(f.q||'')}" placeholder="搜索商品或品牌" aria-label="工作台商品搜索" maxlength="200" autocomplete="off"></label>${renderShopPicker(shopOptions,f.shop_id)}<select data-wb-filter="category" aria-label="工作台类目筛选"><option value="">全部公开类目</option>${categories.map(c=>`<option value="${esc(c.category)}" ${f.category===c.category?'selected':''}>${esc(c.category==='unknown'?'类目未知':c.category)}</option>`).join('')}</select>${f.q||f.category||f.shop_id?'<button class="wb-inline-button" data-wb-action="clear">清除筛选</button>':''}<div class="wb-customize"><details><summary class="button">${icon('columns')}图表设置</summary><div class="wb-customize-menu"><span>选择要显示的模块</span>${Object.entries(panelNames).map(([key,title])=>`<label><input type="checkbox" data-wb-panel="${key}" ${visible(state,key)?'checked':''}>${title}</label>`).join('')}</div></details></div></div>`;
   const tabs=`<div class="wb-tabs" role="group" aria-label="工作台分析主题">${Object.entries(workbenchTabs).map(([key,title])=>`<button class="wb-tab ${state.tab===key?'active':''}" data-wb-tab="${key}" aria-pressed="${state.tab===key}">${title}</button>`).join('')}</div>`;
+  if(!d){
+    if(state.error)return `${filters}<div class="wb-scope-wait" role="status"><strong>${esc(scopeLabel)}</strong><span>数据读取失败</span><button class="button" data-wb-action="retry">重试</button></div>${tabs}`;
+    const skeleton=`<div class="wb-skeleton-grid" aria-hidden="true">${Array.from({length:4},()=>'<div class="wb-skeleton-card"><span class="wb-skeleton-line"></span><span class="wb-skeleton-line"></span></div>').join('')}</div><div class="wb-skeleton-charts" aria-hidden="true">${Array.from({length:3},()=>'<div class="wb-skeleton-card"><span class="wb-skeleton-line"></span></div>').join('')}</div>`;
+    return `${filters}<div class="wb-scope-wait" role="status" data-wb-status="loading"><span class="loader"></span><strong>${esc(scopeLabel)}</strong><span>正在统计…</span></div>${tabs}${skeleton}`;
+  }
+  const context=`<div class="wb-context" data-applied-shop="${esc(d.scope.shop_id||'')}"><span class="wb-coverage-pill">${esc(scopeLabel)} · ${num(d.summary.products)} 件商品</span><span>${esc(d.scope.currency)} · 当前最新公开报价</span><span>更新于 ${esc(formatDate(d.generated_at))}</span>${state.loading?'<span>正在更新…</span>':''}</div>`;
   let cards='';
   if(state.tab==='market') {
     const shopRows=(d.shops||[]).filter(s=>s.price_median!=null).sort((a,b)=>Number(b.price_median)-Number(a.price_median)).map(s=>({...s,value:s.name,count:Number(s.price_median)}));
@@ -143,7 +110,15 @@ export function renderWorkbench(state,{shops=[],icon=()=>''}={}) {
 }
 export function renderDrillProducts(result,title='商品明细') {
   const rows=result.items||[];
-  return `<h2 id="dialog-title">${esc(title)}</h2><p class="detail-subtitle">当前条件共 ${num(result.total)} 件商品 · ${esc(result.scope?.currency||'USD')} · 第 ${result.page} / ${result.total_pages||1} 页</p>${rows.length?`<div class="table-wrap wb-drill-table"><table><thead><tr><th>商品 / 店铺</th><th>公开报价</th><th>评分</th><th>库存</th><th></th></tr></thead><tbody>${rows.map(p=>`<tr><td><div class="table-main">${productPhoto(p)}<div><button class="product-title" data-action="product" data-id="${esc(p.id)}" title="${esc(p.title)}">${esc(p.title||p.platform_product_id)}</button><span class="cell-secondary">${esc(p.shop_name)}</span></div></div></td><td class="cell-price">${money(p.price_min,p.currency)}${p.price_kind==='starting_price'?'<span class="cell-secondary">起价</span>':p.price_kind==='range'?`<span class="cell-secondary">至 ${money(p.price_max,p.currency)}</span>`:''}</td><td>${p.rating==null?'—':esc(p.rating)}</td><td>${esc(stockNames[p.stock_status]||'未知')}</td><td><button class="row-link" data-action="product" data-id="${esc(p.id)}">详情 →</button></td></tr>`).join('')}</tbody></table></div>`:tinyEmpty('没有匹配的商品','图表数字仅对应当前实际观察。')}<div class="table-footer"><span>本页 ${rows.length} 件</span><div class="pagination"><button class="button" data-wb-drill-page="prev" ${result.page<=1?'disabled':''}>上一页</button><button class="button" data-wb-drill-page="next" ${result.page>=result.total_pages?'disabled':''}>下一页</button></div></div>`;
+  const fullTitle=String(title||'商品明细'),shortTitle=fullTitle.split(/\s*[›>]\s*/).filter(Boolean).at(-1)||fullTitle;
+  const page=result.page||1,pages=Math.max(page,result.total_pages||page+(result.has_more?1:0));
+  const pagination=pages>1?`<div class="pagination"><button class="button" data-wb-drill-page="prev" ${page<=1?'disabled':''}>上一页</button><span aria-label="第 ${page} 页，共 ${pages} 页">${page} / ${pages}</span><button class="button" data-wb-drill-page="next" ${page>=pages?'disabled':''}>下一页</button></div>`:'';
+  return `<section class="catalog-list-view">
+    <div class="catalog-dialog-top"><span class="catalog-context">商品明细</span><button class="icon-button" data-action="close-dialog" aria-label="关闭商品明细"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18"/></svg></button></div>
+    <div class="catalog-heading"><h2 class="catalog-title" id="dialog-title" title="${esc(fullTitle)}">${esc(shortTitle)}</h2><span class="catalog-count"><strong>${num(result.total)}</strong> 件 · ${esc(result.scope?.currency||'USD')}</span></div>
+    <div class="catalog-list-body">${rows.length?`<div class="table-wrap wb-drill-table"><table><thead><tr><th>商品 / 店铺</th><th>公开报价</th><th>评分</th><th>库存</th><th></th></tr></thead><tbody>${rows.map(p=>`<tr><td><div class="table-main">${productPhoto(p)}<div><button class="product-title" data-action="product" data-id="${esc(p.id)}" title="${esc(p.title)}">${esc(p.title||p.platform_product_id)}</button><span class="cell-secondary">${esc(p.shop_name)}</span></div></div></td><td class="cell-price">${money(p.price_min,p.currency)}${p.price_kind==='starting_price'?'<span class="cell-secondary">起价</span>':p.price_kind==='range'?`<span class="cell-secondary">至 ${money(p.price_max,p.currency)}</span>`:''}</td><td>${p.rating==null?'—':esc(p.rating)}</td><td>${esc(stockNames[p.stock_status]||'未知')}</td><td><button class="row-link" data-action="product" data-id="${esc(p.id)}">详情 →</button></td></tr>`).join('')}</tbody></table></div>`:'<div class="pi-empty">没有匹配的商品</div>'}</div>
+    <div class="catalog-list-footer"><span>${pages>1?'本页 ':''}${num(rows.length)} 件商品</span>${pagination}</div>
+  </section>`;
 }
 export function productPhoto(product,{large=false}={}) {
   const url=safeUrl(product.thumbnail_url||product.image_url);

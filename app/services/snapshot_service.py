@@ -152,6 +152,8 @@ def persist_snapshot(session, task, response, *, update_current=True, interval_s
     if update_current and product.last_success_at == response.captured_at:
         product.next_capture_at = utc_window(response.captured_at, interval_seconds) + timedelta(seconds=interval_seconds)
     session.flush()
+    from app.services.analytics_refresh import mark_products
+    mark_products(session, [product.id])
     return {"snapshot_id": str(snapshot.id), "snapshots_written": 1, "variant_snapshots_written": len(rows),
             "change_task_created": created, "window_already_saved": False}
 

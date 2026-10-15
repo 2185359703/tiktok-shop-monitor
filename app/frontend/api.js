@@ -1,7 +1,13 @@
 const API_ROOT = '/api/v1';
+const modulePath = new URL(import.meta.url).pathname;
+const deploymentPrefix = modulePath.includes('/ui-assets/') ? modulePath.slice(0, modulePath.indexOf('/ui-assets/')) : '';
+export function deploymentPath(path) { return `${deploymentPrefix}${path}`; }
 
 const errorMessages = Object.freeze({
+  analytics_backfill_pending: '数据视图正在准备，完成后请刷新此页。',
+  analytics_not_enabled: '新数据视图尚未启用，请稍后重试。',
   product_not_found: '该商品不存在或不属于当前市场。',
+  shop_not_found: '该店铺不存在或不属于当前市场。',
   task_not_found: '该任务不存在或不属于当前市场。',
   snapshot_not_found: '该历史快照不存在或不属于当前市场。',
   report_task_not_found: '该报告任务不存在或不属于当前市场。',
@@ -36,26 +42,30 @@ function apiUrl(path) {
     throw new ApiError(0, 'invalid_path', '查询地址不正确。');
   }
   const origin = globalThis.location?.origin || 'http://localhost';
-  const relative = path === API_ROOT || path.startsWith(`${API_ROOT}/`) || path.startsWith(`${API_ROOT}?`)
+  const relative = /^\/api\/v[12](?:\/|\?|$)/.test(path)
     ? path : `${API_ROOT}/${path.replace(/^\/+/, '')}`;
   const url = new URL(relative, origin);
-  if (url.origin !== origin || !(url.pathname === API_ROOT || url.pathname.startsWith(`${API_ROOT}/`)) || url.hash) {
+  if (url.origin !== origin || !/^\/api\/v[12](?:\/|$)/.test(url.pathname) || url.hash) {
     throw new ApiError(0, 'invalid_path', '查询地址不正确。');
   }
+  url.pathname = deploymentPath(url.pathname);
   return url;
 }
 
 /** Same-origin GET only. Server error details are converted to safe display text. */
-export async function request(path, { signal } = {}) {
+export async function request(path, { signal, timeout = 8000 } = {}) {
   const url = apiUrl(path);
+  const deadline = AbortSignal.timeout(timeout);
+  const combined = signal ? AbortSignal.any([signal, deadline]) : deadline;
   let response;
   try {
     response = await fetch(`${url.pathname}${url.search}`, {
       method: 'GET', credentials: 'same-origin', cache: 'no-store',
-      headers: { Accept: 'application/json' }, signal,
+      headers: { Accept: 'application/json' }, signal: combined,
     });
   } catch (error) {
     if (error?.name === 'AbortError' || signal?.aborted) throw error;
+    if (deadline.aborted) throw new ApiError(0, 'request_timeout', '读取超时，请稍后重试；已显示的数据仍然保留。');
     throw new ApiError(0, 'network_error');
   }
   const isJson = (response.headers.get('content-type') || '').includes('json');
@@ -63,7 +73,8 @@ export async function request(path, { signal } = {}) {
   try {
     body = response.status === 204 ? null : isJson ? await response.json() : await response.text();
   } catch (error) {
-    if (error?.name === 'AbortError' || signal?.aborted) throw error;
+    if (signal?.aborted) throw error;
+    if (deadline.aborted) throw new ApiError(0, 'request_timeout', '读取超时，请稍后重试；已显示的数据仍然保留。');
     throw new ApiError(response.status, 'invalid_response', '服务返回的数据无法读取，请稍后重试。');
   }
   if (!response.ok) {
@@ -104,7 +115,7 @@ export async function list(path, params = {}, { signal } = {}) {
     }
     url.searchParams.set(key, String(value));
   }
-  const result = await request(`${url.pathname}${url.search}`, { signal });
+  const result = await request(`${url.pathname.slice(deploymentPrefix.length)}${url.search}`, { signal });
   if (!result || !Array.isArray(result.items) || !Object.hasOwn(result, 'next_after_id') ||
       !(result.next_after_id === null || typeof result.next_after_id === 'string' && /^\d+$/.test(result.next_after_id))) {
     throw new ApiError(200, 'invalid_list_response', '服务返回的列表格式不正确，请稍后重试。');
@@ -140,8 +151,8 @@ export async function collect(path, params = {}, { signal, maxPages = 50 } = {})
 // Keys match app/models/enums.py; unknown future keys can be displayed verbatim by callers.
 export const labels = Object.freeze({
   taskTypes: Object.freeze({
-    shop_discovery: '店铺识别', product_discovery: '商品发现', product_detail: '商品详情',
-    product_snapshot: '商品快照', change_detection: '变化检测', report_generation: '报告生成',
+    shop_discovery: '店铺识别', shop_profile: '店铺档案', product_discovery: '商品发现', product_detail: '商品详情',
+    product_reviews: '商品评论', product_snapshot: '商品快照', change_detection: '变化检测', report_generation: '报告生成',
   }),
   taskStatuses: Object.freeze({
     pending: '待执行', running: '执行中', retry_waiting: '等待重试', succeeded: '已成功',

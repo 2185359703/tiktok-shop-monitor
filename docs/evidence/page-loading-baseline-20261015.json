@@ -1,0 +1,52 @@
+{
+  "schema_version": 1,
+  "source": "Read-only tool outputs from the preceding diagnostic turn in this conversation; recorded during design, not remeasured.",
+  "observed_date": "2026-10-15",
+  "timezone": "Asia/Shanghai",
+  "host_snapshot_approximate_local_time": "21:31",
+  "public_base_url": "http://34.20.217.151/shopscope",
+  "measurement_kind": "Sequential single HTTP samples from Windows with system proxy bypassed; not a browser or load test.",
+  "http_samples": [
+    {"path": "/health/live", "status": 200, "ttfb_seconds": 0.677560, "elapsed_seconds": 0.677615, "received_bytes": 15, "complete": true},
+    {"path": "/api/v1/capabilities", "status": 200, "ttfb_seconds": 0.762750, "elapsed_seconds": 0.762844, "received_bytes": 452, "complete": true},
+    {"path": "/api/v1/shops?with_url=true&limit=100", "status": 200, "ttfb_seconds": 1.194436, "elapsed_seconds": 1.921698, "received_bytes": 27364, "complete": true},
+    {"path": "/api/v1/analytics/products?page=1&page_size=24&sort=recent", "status": null, "ttfb_seconds": null, "elapsed_seconds": 20.016229, "received_bytes": 0, "complete": false, "stop_reason": "client_timeout"},
+    {"path": "/api/v1/overview", "status": 200, "ttfb_seconds": 13.678690, "elapsed_seconds": 15.153466, "received_bytes": 829, "complete": true},
+    {"path": "/api/v1/reports/current?lookback_hours=24", "compressed_requested": false, "status": 200, "ttfb_seconds": 1.216586, "elapsed_seconds": 45.002951, "declared_uncompressed_bytes": 40444471, "received_bytes": 443696, "complete": false, "stop_reason": "client_timeout"},
+    {"path": "/api/v1/reports/current?lookback_hours=24", "compressed_requested": true, "status": null, "ttfb_seconds": null, "elapsed_seconds": 25.007723, "received_bytes": 0, "complete": false, "stop_reason": "client_timeout", "compression_ratio": null}
+  ],
+  "host_snapshot": {
+    "vcpus": 2,
+    "memory_total_mib": 3908,
+    "memory_available_mib": 1064,
+    "swap_total_mib": 0,
+    "load_average_1_5_15_minutes": [9.37, 10.17, 8.05],
+    "mysql_container_memory_mib": 891.7,
+    "mysql_container_limit_mib": 1024,
+    "api_container_memory_mib": 218.3,
+    "api_container_limit_mib": 384,
+    "limitation": "Values came from separate nearby snapshots and are not a sustained utilization profile."
+  },
+  "mysql_metadata_estimates": {
+    "method": "information_schema.TABLES.TABLE_ROWS; estimates, not exact business counts",
+    "products": 38375,
+    "product_variants": 675219,
+    "product_snapshots": 18481,
+    "variant_snapshots": 680677,
+    "crawl_tasks": 84476
+  },
+  "verified_live_source_sha256": {
+    "app/services/analytics_service.py": "cc74d0c6163ebac07f7bde31527033d72037c23057323f50ce523a94e6a1e446",
+    "app/reports/summary.py": "45bda051e7b826140fdba91ae923841c978337e7f8d458ba63ce09146f6f4600",
+    "app/reports/cache.py": "42650159c6a888a02528338f7644ca68132bfd950f9f6ce6aaecf29756a65b7d",
+    "app/api/routes_analytics.py": "3e16fe2d9ddaa1a9a839262cb3cba40135b0e0c55b941b6f2b0d1610fba84889"
+  },
+  "deployment_difference": "Live workbench TTL was 120 seconds; the local working file used 30 seconds. Analytics service, report summary and cache implementation hashes matched.",
+  "reproduction": {
+    "working_directory": "D:/Project/tiktok-shop-monitor",
+    "static_frontend": "rg -n 'needsReport|Promise.allSettled|state.loading' app/frontend/app.js",
+    "static_backend": "rg -n 'def list_analytics_products|field_coverage|image_coverage|_entry|_inflight' app/services/analytics_service.py app/reports/cache.py",
+    "single_http_sample_powershell": "curl.exe --noproxy '*' --compressed --connect-timeout 5 --max-time 20 -sS -o NUL -w 'status=%{http_code} ttfb=%{time_starttransfer}s total=%{time_total}s bytes=%{size_download}\n' 'http://34.20.217.151/shopscope/api/v1/analytics/products?page=1&page_size=24&sort=recent'",
+    "note": "Run only the endpoint needed for a fresh sample. A client timeout does not prove server-side SQL cancellation. SSH and container observations require the already configured host access."
+  }
+}

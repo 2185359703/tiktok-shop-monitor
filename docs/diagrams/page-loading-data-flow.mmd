@@ -1,0 +1,29 @@
+flowchart LR
+  subgraph writes["已有采集与写入"]
+    collector["采集 Worker"]
+    business[("业务表与历史快照")]
+    collector -->|"业务事务"| business
+  end
+  subgraph analysis["新增后台分析进程"]
+    dirty[("合并后的刷新请求")]
+    projector["单并发投影与统计"]
+    readmodel[("商品与事件读取表")]
+    snapshots[("已发布统计结果")]
+    dirty -->|"领取与续租"| projector
+    business -->|"按变更资源读取"| projector
+    projector -->|"原子更新"| readmodel
+    readmodel -->|"后台汇总"| projector
+    projector -->|"成功后替换"| snapshots
+  end
+  collector -->|"同事务标记变更"| dirty
+  subgraph serving["页面读取"]
+    api["FastAPI v2"]
+    web["分区域显示与浏览器缓存"]
+    readmodel -->|"分页"| api
+    snapshots -->|"摘要与图表"| api
+    api --> web
+    api -. "有界登记统计需求" .-> dirty
+  end
+  business -->|"原有历史口径"| reports["报告 Worker"]
+  reports --> files[("报告文件与轻量清单")]
+  files -->|"明确预览或下载"| api

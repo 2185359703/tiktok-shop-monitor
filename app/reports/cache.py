@@ -1,6 +1,7 @@
 """One-context, single-flight cache of immutable report response bytes."""
 
 import time
+import asyncio
 from concurrent.futures import Future
 from dataclasses import dataclass
 from threading import Lock
@@ -64,3 +65,44 @@ class ReportCache:
                 self._inflight = None
             future.set_result(result)
             return result
+
+
+class AsyncReportCache:
+    """Share builds without Future.result() blocking the API event loop."""
+
+    def __init__(self, ttl_seconds=60, clock=time.monotonic):
+        self.ttl_seconds, self.clock = ttl_seconds, clock
+        self._lock, self._entry, self._inflight = asyncio.Lock(), None, None
+
+    async def get_or_build(self, key, builder):
+        while True:
+            async with self._lock:
+                if self._entry and self._entry[0] == key and self.clock() < self._entry[1]:
+                    return self._entry[2]
+                if self._inflight is None:
+                    self._entry = None
+                    async def build():
+                        try:
+                            result = await builder()
+                            self._entry = key, self.clock() + self.ttl_seconds, result
+                            return result
+                        finally:
+                            self._inflight = None
+                    task = asyncio.create_task(build())
+                    task.add_done_callback(lambda done: None if done.cancelled() else done.exception())
+                    self._inflight = key, task
+                flight_key, task = self._inflight
+            try:
+                result = await asyncio.shield(task)
+            except Exception:
+                if flight_key == key:
+                    raise
+                continue
+            if flight_key == key:
+                return result
+
+    async def close(self):
+        if self._inflight:
+            _, task = self._inflight
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)

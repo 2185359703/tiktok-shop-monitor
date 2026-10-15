@@ -45,8 +45,8 @@ def safe_database_url(value: str | URL) -> URL:
 
 
 def validate_database_url(url: URL) -> None:
-    if url.drivername != "mysql+pymysql":
-        raise ValueError("DATABASE_URL must use mysql+pymysql.")
+    if url.drivername not in {"mysql+pymysql", "mysql+aiomysql"}:
+        raise ValueError("DATABASE_URL must use mysql+pymysql or mysql+aiomysql.")
     if not url.database:
         raise ValueError("DATABASE_URL must name the project database.")
 
@@ -55,7 +55,7 @@ def make_engine(database_url: str | URL | None = None, *, with_database: bool = 
     url = configured_database_url() if database_url is None else safe_database_url(database_url)
     validate_database_url(url)
     # Require consistent encoding without relying on the server's current defaults.
-    url = url.update_query_dict({"charset": "utf8mb4"})
+    url = url.set(drivername="mysql+pymysql").update_query_dict({"charset": "utf8mb4"})
     if not with_database:
         # URL.set(database=None) means "leave unchanged" in SQLAlchemy.
         # An empty database connects without selecting a schema in PyMySQL.

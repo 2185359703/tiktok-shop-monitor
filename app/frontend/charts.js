@@ -68,20 +68,22 @@ export function renderEventTrend(report, hours = 24) {
   const bucketCount = Math.floor((last - first) / period) + 1;
   const buckets = Array.from({ length: bucketCount }, (_, index) => ({ time: first + index * period, count: 0 }));
   let loadedInWindow = 0;
-  const events = Array.isArray(report?.events) ? report.events : [];
+  const aggregated = Array.isArray(report?.event_buckets);
+  const events = aggregated ? report.event_buckets : Array.isArray(report?.events) ? report.events : [];
   for (const event of events) {
-    const observed = dateValue(event.observed_at);
+    const observed = aggregated ? Math.max(start, Number(event.time)) : dateValue(event.observed_at);
     if (!Number.isFinite(observed) || observed < start || observed > end) continue;
     const index = Math.min(buckets.length - 1, Math.floor((observed - first) / period));
     if (index >= 0 && index < buckets.length) {
-      buckets[index].count += 1;
-      loadedInWindow += 1;
+      const amount = aggregated ? count(event.count) : 1;
+      buckets[index].count += amount;
+      loadedInWindow += amount;
     }
   }
   const sameWindow = Math.abs(start - suppliedStart) < 1000;
   const summaryTotal = report?.summary?.events_in_window;
   const total = sameWindow && summaryTotal != null ? count(summaryTotal) : loadedInWindow;
-  const truncated = Boolean(report?.events_truncated);
+  const truncated = !aggregated && Boolean(report?.events_truncated);
   const headline = truncated && !sameWindow ? '窗口内已加载变化' : '窗口内变化事件';
   const windowName = requestedHours === 24 ? '最近 24 小时' : requestedHours === 168 ? '最近 7 天' : requestedHours === 720 ? '最近 30 天' : `最近 ${requestedHours} 小时`;
   const shorterWindow = suppliedStart > requestedStart + 1000;
@@ -127,7 +129,7 @@ export function renderStockDonut(report) {
     { label: '有货', key: 'sku_in_stock', color: GREEN },
     { label: '缺货', key: 'sku_out_of_stock', color: BLUE },
     { label: '未知 / 部分', key: 'sku_unknown', color: GREY },
-  ].map(state => ({ ...state, value: products.reduce((sum, row) => sum + count(row[state.key]), 0) }));
+  ].map(state => ({ ...state, value: report?.sku_totals ? count(report.sku_totals[state.key]) : products.reduce((sum, row) => sum + count(row[state.key]), 0) }));
   const total = states.reduce((sum, state) => sum + state.value, 0);
   const known = states[0].value + states[1].value;
   const radius = 68, circumference = 2 * Math.PI * radius;

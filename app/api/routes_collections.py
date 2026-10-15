@@ -1,16 +1,21 @@
 import json
+import asyncio
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import HTTPException, Request
 
 
-router = APIRouter(prefix="/api/v1/collections", tags=["collections"])
+from app.api.async_router import AsyncAPIRouter
+
+
+router = AsyncAPIRouter(prefix="/api/v1/collections", tags=["collections"])
 
 
 @router.get("/current")
-def current_collection(request: Request):
+async def current_collection(request: Request):
     settings = request.app.state.settings
     try:
-        state = json.loads((settings.collection_directory / "current.json").read_text(encoding="utf-8"))
+        content = await asyncio.to_thread((settings.collection_directory / "current.json").read_text, encoding="utf-8")
+        state = json.loads(content)
     except FileNotFoundError:
         raise HTTPException(404, "collection_not_started") from None
     if state.get("platform") != settings.platform or state.get("region") != settings.region:

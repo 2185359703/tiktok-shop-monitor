@@ -35,7 +35,10 @@ def test_collection_task_scopes_avoid_dependent_cast_subqueries():
     assert len(queries) == 3 and "JOIN crawl_tasks ON" in queries[2]
     assert "CAST(products.id AS CHAR(128))" in queries[2]
     assert all(" IN (SELECT" not in sql and " OR " not in sql for sql in queries)
-    assert all("crawl_tasks.payload" not in sql and "crawl_tasks.checkpoint" not in sql for sql in queries)
+    # The mode predicate reads a scalar JSON value, but progress queries must
+    # never load large payloads or checkpoints into the Python result set.
+    assert all("crawl_tasks.payload" not in sql.partition("\nFROM ")[0]
+               and "crawl_tasks.checkpoint" not in sql.partition("\nFROM ")[0] for sql in queries)
 
 
 def seed_batch():
@@ -88,6 +91,18 @@ def test_collection_join_excludes_unowned_products_and_other_markets(session):
     session.flush()
     state = collection_progress(session, batch)
     assert state["failed_tasks"] == 0 and state["full_coverage"]
+
+
+def test_image_backfill_is_accounted_separately_from_initial_collection(session):
+    batch, _ = scope_fixture(session)
+    comparison = session.scalar(select(CrawlTask).where(CrawlTask.task_type == TaskType.CHANGE_DETECTION))
+    comparison.status = TaskStatus.SUCCEEDED
+    session.add(CrawlTask(platform="tiktok_shop", region="US", task_type=TaskType.PRODUCT_DETAIL,
+                          resource_type=ResourceType.PRODUCT, resource_id=comparison.resource_id,
+                          payload={"capture_mode": "images_only"}, status=TaskStatus.DEAD))
+    session.flush()
+    state = collection_progress(session, batch)
+    assert state["full_coverage"] and state["failed_tasks"] == 0
 
 
 def test_empty_queue_at_a_page_budget_is_partial_coverage(session):

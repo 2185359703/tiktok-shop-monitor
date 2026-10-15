@@ -2,12 +2,14 @@
 
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
+from types import SimpleNamespace
 
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
-from sqlalchemy import MetaData, create_engine, event
-from sqlalchemy.schema import DropTable
+from sqlalchemy import MetaData, create_engine, event, func
+from sqlalchemy.dialects.mysql import dialect as mysql_dialect
+from sqlalchemy.schema import CreateTable, DropTable
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
 from sqlalchemy.types import TypeDecorator
@@ -15,7 +17,10 @@ from sqlalchemy.types import TypeDecorator
 from app.api.routes_analytics import router
 from app.models import Base, ChangeEvent, Product, ProductSnapshot, ProductVariant, Shop
 from app.models.product_image import ProductImage
-from app.services.analytics_service import build_workbench, list_analytics_products
+from app.services.analytics_service import (
+    build_workbench, list_analytics_products, shop_variant_aggregation,
+    filters, iter_workbench_projection_rows, workbench_projection_source, workbench_variant_query,
+)
 from app.settings import Settings
 
 
@@ -336,3 +341,167 @@ def test_server_sorts_with_stable_pagination_and_unknown_details_last(analytics_
     second = list_analytics_products(analytics_db, Settings(), sort=sort, page_size=2, page=2)
     assert [row["id"] for row in first["items"] + second["items"]] == expected
     assert by_key(first["items"] + second["items"], "id")["4"]["variant_count"] is None
+
+
+@pytest.mark.parametrize("observed", [False, True])
+def test_sku_summary_keeps_empty_sets_and_unknown_stock_explicit(analytics_db, observed):
+    product = analytics_db.get(Product, 1)
+    if not observed:
+        product.raw_attributes = {"observed_sku_ids": []}
+    else:
+        for identifier in (1, 2):
+            variant = analytics_db.get(ProductVariant, identifier)
+            variant.stock_status = "unknown" if identifier == 1 else "partial"
+            variant.color = variant.size = None
+    analytics_db.commit()
+    result = build_workbench(analytics_db, Settings(), as_of=NOW)
+    total = 2 if observed else 0
+    assert result["summary"]["variants"] == total
+    assert result["summary"]["known_stock_variants"] == 0
+    assert result["summary"]["out_of_stock_variants"] == 0
+    assert result["summary"]["sku_stockout_pct"] is None
+    matrix = result["color_size_matrix"]
+    assert matrix["total_variants"] == matrix["missing_attributes_variants"] == total
+    assert matrix["eligible_variants"] == matrix["shown_variants"] == 0
+    assert matrix["colors"] == matrix["sizes"] == matrix["cells"] == []
+
+
+def test_global_sku_totals_include_shops_beyond_display_limit(analytics_db, monkeypatch):
+    monkeypatch.setattr("app.services.analytics_service.SHOP_LIMIT", 1)
+    analytics_db.get(Product, 3).raw_attributes = {"observed_sku_ids": ["beta-sku", "beta-sku"]}
+    analytics_db.add(ProductVariant(id=10, product_id=3, platform_variant_id="beta-sku", variant_key="a" * 64,
+                     currency="USD", stock_status="out_of_stock", price=Decimal("30.01"), color="Blue", size="L",
+                     created_at=NOW, updated_at=NOW))
+    analytics_db.commit()
+    result = build_workbench(analytics_db, Settings(), as_of=NOW)
+    assert result["coverage"]["shops_truncated"] and len(result["shops"]) == 1
+    assert result["shops"][0]["id"] == "1" and result["shops"][0]["variant_count"] == 2
+    assert result["summary"]["variants"] == result["summary"]["known_stock_variants"] == 3
+    assert result["summary"]["out_of_stock_variants"] == 2
+    assert result["summary"]["sku_stockout_pct"] == "66.67"
+    assert result["color_size_matrix"]["total_variants"] == 3
+
+
+def test_matrix_eligible_count_precedes_color_and_size_display_limits(analytics_db):
+    combinations = [(f"Color {color:02d}", f"Size {size:02d}") for color in range(14) for size in range(11)]
+    combinations += [(None, "Size 00"), ("Color 00", None)]
+    sku_ids = []
+    for identifier, (color, size) in enumerate(combinations, start=100):
+        sku_id = f"matrix-{identifier}"
+        sku_ids.append(sku_id)
+        analytics_db.add(ProductVariant(id=identifier, product_id=1, platform_variant_id=sku_id,
+                         variant_key=f"{identifier:064x}", currency="USD", stock_status="unknown",
+                         color=color, size=size, created_at=NOW, updated_at=NOW))
+    analytics_db.get(Product, 1).raw_attributes = {"observed_sku_ids": [*sku_ids, sku_ids[0]]}
+    analytics_db.commit()
+    result = build_workbench(analytics_db, Settings(), as_of=NOW)
+    matrix = result["color_size_matrix"]
+    assert result["summary"]["variants"] == matrix["total_variants"] == 156
+    assert matrix["eligible_variants"] == 154 and matrix["missing_attributes_variants"] == 2
+    assert len(matrix["colors"]) == 12 and len(matrix["sizes"]) == 10
+    assert matrix["shown_variants"] == len(matrix["cells"]) == 120
+    assert matrix["truncated"] is True
+    assert all(cell["unknown"] == cell["count"] == 1 for cell in matrix["cells"])
+
+
+@pytest.mark.parametrize("failure_at", [None, "consumer", "create", "drop"])
+def test_mysql_temp_projection_is_connection_owned_and_cleaned_on_failures(failure_at, monkeypatch):
+    statements = []
+    batches = [[{"variant_id": 1, "shop_id": 2, "color": "Red", "size": "S", "stock_status": "unknown"}]]
+    monkeypatch.setattr("app.services.analytics_service.iter_workbench_projection_rows", lambda *args: iter(batches))
+    class BoundConnection:
+        invalidated = False
+
+        def get_isolation_level(self):
+            return "READ COMMITTED"
+
+        def execute(self, statement, parameters=None):
+            statements.append(statement)
+            if isinstance(statement, CreateTable) and failure_at == "create":
+                raise RuntimeError("create interrupted")
+
+        def exec_driver_sql(self, statement):
+            statements.append(statement)
+            if failure_at == "drop":
+                raise RuntimeError("cleanup interrupted")
+
+        def invalidate(self):
+            self.invalidated = True
+
+    connection = BoundConnection()
+    session = SimpleNamespace(bind=SimpleNamespace(dialect=SimpleNamespace(name="mysql")),
+                              connection=lambda: connection)
+    def consume():
+        with workbench_variant_query(session, [], "USD") as query:
+            projected_sql = str(query.compile(dialect=mysql_dialect())).lower()
+            assert "json_table" not in projected_sql and " join " not in projected_sql
+            assert set(query.selected_columns.keys()) == {"variant_id", "shop_id", "color", "size", "stock_status"}
+            aggregate_sql = str(shop_variant_aggregation(query).compile(dialect=mysql_dialect())).lower()
+            assert " join " not in aggregate_sql and "product_variants" not in aggregate_sql and "products" not in aggregate_sql
+            count_sql = str(query.with_only_columns(func.count()).compile(dialect=mysql_dialect())).lower()
+            assert "from workbench_skus_" in count_sql
+            if failure_at == "consumer":
+                raise RuntimeError("consumer failed")
+    if failure_at:
+        with pytest.raises(RuntimeError):
+            consume()
+    else:
+        consume()
+    assert isinstance(statements[0], CreateTable)
+    create_sql = str(statements[0].compile(dialect=mysql_dialect())).upper()
+    assert "CREATE TEMPORARY TABLE" in create_sql and "ENGINE=INNODB" in create_sql
+    assert connection.invalidated is (failure_at in {"create", "drop"})
+    if failure_at != "create":
+        assert statements[-1].startswith("DROP TEMPORARY TABLE `workbench_skus_")
+        fill_sql = str(statements[1].compile(dialect=mysql_dialect(), compile_kwargs={"literal_binds": True})).upper()
+        assert "INSERT IGNORE" in fill_sql and "VALUES" in fill_sql
+        assert "SELECT" not in fill_sql and "JSON_TABLE" not in fill_sql
+
+
+def test_projection_source_explain_controls_keep_the_same_fields_and_predicates():
+    forced = workbench_projection_source([Product.shop_id == 17], "USD", force_variant_index=True)
+    automatic = workbench_projection_source([Product.shop_id == 17], "USD", force_variant_index=False)
+    def compiled(query):
+        return str(query.compile(dialect=mysql_dialect(), compile_kwargs={"literal_binds": True}))
+    forced_sql, automatic_sql = compiled(forced), compiled(automatic)
+    assert forced_sql.replace(" FORCE INDEX (uq_variants_platform_id)", "") == automatic_sql
+    assert "products.shop_id = 17" in forced_sql and "JSON_TYPE" in forced_sql.upper()
+    assert "EXPLAIN FORMAT=JSON SELECT STRAIGHT_JOIN" in "EXPLAIN FORMAT=JSON " + forced_sql
+    assert list(forced.selected_columns.keys()) == ["variant_id", "shop_id", "color", "size", "stock_status"]
+
+
+def test_bounded_projection_pages_products_and_skus_without_buffering_catalog(analytics_db):
+    analytics_db.get(Product, 1).raw_attributes = {"observed_sku_ids": ["sku1", "sku1", "sku2", 1, True]}
+    analytics_db.get(Product, 2).raw_attributes = {"observed_sku_ids": "sku-a"}
+    analytics_db.get(Product, 3).raw_attributes = {"observed_sku_ids": ["sku-9", "sku-9"]}
+    for identifier, product_id, sku in ((10, 2, "sku-a"), (11, 2, "sku-b"), (12, 2, "sku-z"),
+                                        (20, 3, "sku-0"), (21, 3, "sku-9")):
+        analytics_db.add(ProductVariant(id=identifier, product_id=product_id, platform_variant_id=sku,
+                         variant_key=f"{identifier:064x}", currency="USD", stock_status="unknown",
+                         color=" Red ", size="S", created_at=NOW, updated_at=NOW))
+    analytics_db.commit()
+    observed_sizes = []
+    class BoundedReader:
+        bind = analytics_db.bind
+
+        def execute(self, query):
+            rows = analytics_db.execute(query).all()
+            observed_sizes.append(len(rows))
+            return SimpleNamespace(all=lambda: rows)
+    clauses, scope = filters(Settings(), session=analytics_db)
+    batches = list(iter_workbench_projection_rows(BoundedReader(), clauses, scope["currency"],
+                                                 product_batch_size=1, sku_batch_size=1))
+    assert {row["variant_id"] for batch in batches for row in batch} == {1, 2, 10, 21}
+    assert all(len(batch) <= 1 for batch in batches) and max(observed_sizes) == 1
+    assert next(row for batch in batches for row in batch if row["variant_id"] == 10)["color"] == " Red "
+
+
+@pytest.mark.parametrize("boundary", ["items", "bytes"])
+def test_projection_rejects_oversized_json_without_truncated_statistics(analytics_db, monkeypatch, boundary):
+    if boundary == "items":
+        monkeypatch.setattr("app.services.analytics_service.WORKBENCH_OBSERVED_ID_LIMIT", 1)
+    else:
+        monkeypatch.setattr("app.services.analytics_service.WORKBENCH_OBSERVED_BYTES_LIMIT", 1)
+    clauses, scope = filters(Settings(), session=analytics_db)
+    with pytest.raises(ValueError, match="未截断统计"):
+        list(iter_workbench_projection_rows(analytics_db, clauses, scope["currency"]))

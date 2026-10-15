@@ -1,0 +1,182 @@
+/* Let the plot fill the canvas; product facts appear only when requested. */
+.sc-chart-surface {
+  position: relative;
+  min-width: 0;
+  cursor: zoom-in;
+  touch-action: manipulation;
+}
+.sc-chart-surface:focus-visible {
+  outline: 2px solid #9bb4ff;
+  outline-offset: -2px;
+  border-radius: 7px;
+}
+.sc-expand-button {
+  position: absolute;
+  top: 8px;
+  right: 10px;
+  z-index: 2;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: auto;
+  min-width: 62px;
+  height: 30px;
+  gap: 4px;
+  padding: 0 8px;
+  font: 11px var(--font);
+  border: 1px solid #e7ecf5;
+  border-radius: 7px;
+  background: #ffffffed;
+  color: #7586a3;
+  cursor: zoom-in;
+  transition: border-color .15s, color .15s, background .15s;
+}
+.sc-expand-button .icon { width: 15px; height: 15px; }
+.sc-expand-button:hover,
+.sc-expand-button:focus-visible { border-color: #bbccfc; background: #f3f6ff; color: var(--accent, #3765ef); }
+.sc-chart-surface .wb-chart-sample { right: 82px; top: 12px; pointer-events: none; }
+.sc-chart-surface .wb-scatter-point { cursor: zoom-in; }
+
+dialog.scatter-dialog {
+  position: fixed;
+  inset: 0;
+  width: 1120px;
+  max-width: 92vw;
+  height: min(740px, calc(100dvh - 48px));
+  max-height: calc(100dvh - 48px);
+  min-height: 0;
+  margin: auto;
+  padding: 0;
+  border: 1px solid #e3e9f2;
+  border-radius: 15px;
+  background: #fff;
+  color: #34425a;
+  box-shadow: 0 18px 72px #1c315926, 0 2px 8px #1c31590a;
+  overflow: visible;
+}
+dialog.scatter-dialog[open] { display: flex; flex-direction: column; }
+dialog.scatter-dialog::backdrop { background: #26385035; backdrop-filter: none; }
+.sc-dialog-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  flex-shrink: 0;
+  min-width: 0;
+  padding: 19px 24px 15px;
+  border-bottom: 1px solid #edf1f7;
+}
+.sc-dialog-heading { min-width: 0; }
+.sc-dialog-heading h2 { margin: 0; color: #30415e; font-size: 17px; font-weight: 600; line-height: 1.5; }
+.sc-context { display: flex; align-items: center; flex-wrap: wrap; gap: 5px 12px; margin-top: 5px; color: #7c899f; font-size: 12px; line-height: 1.5; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.sc-context strong { color: #5c6c86; font-weight: 550; }
+.sc-actions { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
+.sc-actions .icon-button { width: 34px; height: 34px; border-color: #e8edf5; border-radius: 8px; }
+.scatter-dialog :where(button, a):focus-visible,
+.sc-tooltip :where(button, a):focus-visible { outline: 2px solid #9bb4ff; outline-offset: 3px; }
+.sc-dialog-body {
+  position: relative;
+  display: flex;
+  flex: 1 1 auto;
+  align-items: stretch;
+  min-width: 0;
+  min-height: 0;
+  padding: 18px 24px 8px;
+  overflow: hidden;
+}
+.sc-dialog-body > .sc-chart-surface,
+.sc-dialog-body > .wb-chart { flex: 1 1 auto; min-width: 0; min-height: 0; height: 100%; padding: 0; }
+.sc-dialog-body .sc-chart-surface { cursor: default; }
+.sc-dialog-body svg.wb-scatter { display: block; flex: 1 1 auto; width: 100%; height: 100%; min-width: 0; min-height: 0; overflow: visible; font-family: var(--font); }
+.sc-dialog-body svg.wb-scatter text { font-size: 12px; font-variant-numeric: tabular-nums; }
+.sc-dialog-body .wb-scatter-point { cursor: pointer; }
+.sc-dialog-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px 20px;
+  flex-shrink: 0;
+  min-width: 0;
+  margin: 0 24px;
+  padding: 13px 0 16px;
+  border-top: 1px solid #edf1f7;
+  color: #7e8ba2;
+  font-size: 11px;
+  line-height: 1.6;
+  font-variant-numeric: tabular-nums;
+}
+.sc-dialog-footer > * { min-width: 0; }
+.sc-dialog-footer strong { color: #526784; font-weight: 550; }
+
+.sc-tooltip {
+  position: fixed;
+  z-index: 10000;
+  width: 280px;
+  max-width: calc(100vw - 24px);
+  max-height: calc(100dvh - 24px);
+  padding: 14px;
+  border: 1px solid #e0e7f2;
+  border-radius: 11px;
+  background: #fff;
+  color: #3c4c68;
+  box-shadow: 0 10px 35px #20395b24, 0 1px 4px #20395b0a;
+  font: 12px/1.6 var(--font);
+  text-align: left;
+  cursor: default;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  pointer-events: auto;
+}
+.sc-tooltip[hidden] { display: none !important; }
+.sc-tooltip-shop { overflow: hidden; margin-bottom: 4px; color: #7d8ca4; font-size: 11px; line-height: 1.5; text-overflow: ellipsis; white-space: nowrap; }
+.sc-tooltip-title { display: -webkit-box; margin: 0; overflow: hidden; color: #34445f; font-size: 12px; font-weight: 550; line-height: 1.65; overflow-wrap: anywhere; -webkit-box-orient: vertical; -webkit-line-clamp: 3; }
+.sc-tooltip-metrics { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px 18px; margin: 13px 0 0; padding: 12px 0 0; border-top: 1px solid #edf1f7; }
+.sc-tooltip-metrics > div { min-width: 0; }
+.sc-tooltip-metrics dt { margin: 0; color: #8995a9; font-size: 10px; line-height: 1.5; }
+.sc-tooltip-metrics dd { margin: 3px 0 0; color: #3c506e; font-size: 12px; font-weight: 550; line-height: 1.5; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.sc-tooltip-actions { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-top: 13px; padding-top: 10px; border-top: 1px solid #edf1f7; }
+.sc-tooltip-actions .button { min-height: 29px; padding: 5px 10px; border: 1px solid #dfe7fd; border-radius: 6px; background: #f4f7ff; color: var(--accent, #3765ef); font-size: 11px; line-height: 1.5; }
+.sc-tooltip-actions .button:hover { border-color: #b6c9ff; background: #ecf1ff; }
+.sc-tooltip-actions .icon-button { width: 26px; height: 26px; border-color: transparent; color: #94a0b4; }
+.sc-tooltip-actions .icon-button:hover { background: #f3f6fb; color: #526a92; }
+.sc-tooltip-actions .icon-button .icon { width: 13px; height: 13px; }
+
+.sc-chart-surface .wb-scatter-point,
+.scatter-dialog .wb-scatter-point { transition: opacity .12s, stroke .12s, stroke-width .12s, filter .12s; }
+.sc-chart-surface svg .wb-scatter-point:is(:hover, :focus-visible, [aria-selected="true"], .is-selected),
+.scatter-dialog svg .wb-scatter-point:is(:hover, :focus-visible, [aria-selected="true"], .is-selected) {
+  opacity: 1;
+  stroke: #fff;
+  stroke-width: 1.8;
+  outline: none;
+  filter: drop-shadow(0 0 1.4px #3765ef) drop-shadow(0 0 1.4px #3765ef);
+}
+
+@media (max-width: 600px) {
+  dialog.scatter-dialog { width: calc(100vw - 20px); max-width: calc(100vw - 20px); height: calc(100dvh - 28px); max-height: calc(100dvh - 28px); border-radius: 12px; }
+  .sc-dialog-header { gap: 10px; padding: 15px 14px 12px; }
+  .sc-dialog-heading h2 { font-size: 16px; }
+  .sc-context { gap: 4px 9px; font-size: 11px; }
+  .sc-actions { gap: 5px; }
+  .sc-actions .icon-button { width: 36px; height: 36px; }
+  .sc-dialog-body { padding: 14px 10px 8px; }
+  .sc-dialog-footer { flex-wrap: wrap; gap: 2px 10px; margin-inline: 14px; padding: 11px 0 13px; font-size: 10px; }
+  .sc-tooltip { padding: 12px; border-radius: 9px; }
+  .sc-tooltip-actions .button { min-height: 34px; }
+  .sc-tooltip-actions .icon-button { width: 32px; height: 32px; }
+  .sc-expand-button { height: 32px; }
+}
+
+@media (max-height: 500px) {
+  dialog.scatter-dialog { height: calc(100dvh - 20px); max-height: calc(100dvh - 20px); }
+  .sc-dialog-header { padding-block: 9px; }
+  .sc-dialog-body { padding-block: 6px; }
+  .sc-dialog-footer { padding-block: 7px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sc-expand-button,
+  .sc-chart-surface .wb-scatter-point,
+  .scatter-dialog .wb-scatter-point { transition: none; }
+}

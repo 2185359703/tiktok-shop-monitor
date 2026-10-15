@@ -1,12 +1,13 @@
 import secrets
-from datetime import datetime, timezone
+import re
+from datetime import datetime, timedelta, timezone
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
+from fastapi import Depends, Header, HTTPException, Query, Request
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 from sqlalchemy import func, select
 
-from app.models import ChangeEvent, ChangeEventType, CrawlAttempt, CrawlTask, Product, ProductVariant, ProductSnapshot, VariantSnapshot, ResolutionStatus, SeedShopObservation, Shop, TaskStatus, TaskType
+from app.models import ChangeEvent, ChangeEventType, CrawlAttempt, CrawlTask, Product, ProductVariant, ProductSnapshot, VariantSnapshot, ResolutionStatus, SeedShopObservation, Shop, ShopProfileSnapshot, TaskStatus, TaskType
 from app.services.scheduler import task_counts
 from app.services.seed_importer import ensure_seed_task, seed_task_key
 from app.services.shop_discovery import ensure_product_discovery_task, product_discovery_key
@@ -17,19 +18,90 @@ from app.services.task_runtime import database_now
 from app.services.product_detail import ensure_initial_detail_task
 from app.crawlers.product_list import product_id_from_url
 from app.services.snapshot_service import ensure_snapshot_task, ensure_change_task, utc_window
+from app.services.shop_profile import ensure_shop_profile_task, shop_profile_window
+from app.services.shop_profile_reporting import shop_profile_coverage
 
 
-router = APIRouter(prefix="/api/v1")
+from app.api.async_router import AsyncAPIRouter
 
 
-def session_dependency(request: Request):
-    with request.app.state.factory() as session:
-        yield session
+router = AsyncAPIRouter(prefix="/api/v1")
+
+
+async def session_dependency(request: Request):
+    database = getattr(request.app.state, "database", None)
+    if database is not None:
+        async with database.factory() as session:
+            yield session
+    else:
+        with request.app.state.factory() as session:
+            yield session
 
 
 Db = Annotated[object, Depends(session_dependency)]
 Limit = Annotated[int, Query(ge=1, le=100)]
 After = Annotated[int, Query(ge=0)]
+ProfileAfter = Annotated[int, Query(ge=0, le=2 ** 64 - 1)]
+
+PROFILE_COUNT_FIELDS = ("follower_count", "sales_count", "global_sales_count", "video_count", "product_count", "review_count")
+PROFILE_TEXT_FIELDS = ("logo_url", "verification_type", "identity_label_key", "identity_label_text",
+                       "follower_count_text", "sales_count_text", "global_sales_count_text", "video_count_text", "product_count_text")
+
+
+def profile_values(row):
+    # Counts can exceed JavaScript's exact integer range. Never reconstruct them from display text.
+    return {**{key: str(getattr(row, key)) if getattr(row, key) is not None else None for key in PROFILE_COUNT_FIELDS},
+            **{key: getattr(row, key) for key in PROFILE_TEXT_FIELDS},
+            "rating": str(row.rating) if row.rating is not None else None}
+
+
+def shop_summary(row, settings, *, now=None):
+    captured = row.profile_captured_at
+    now = now or datetime.now(timezone.utc)
+    if captured is not None and captured.tzinfo is None:
+        captured = captured.replace(tzinfo=timezone.utc)
+    stale = captured is not None and captured + timedelta(seconds=settings.shop_profile_interval_seconds) <= now
+    return {"id": str(row.id), "platform_shop_id": str(row.platform_shop_id),
+            "platform": row.platform, "region": row.region,
+            "name": row.canonical_name, "shop_url": row.canonical_url,
+            "discovery_category": row.discovery_category, "currency": row.currency,
+            "status": row.status, "last_seen_at": row.last_seen_at,
+            **profile_values(row), "profile_captured_at": captured,
+            "profile_source_url": row.profile_source_url, "profile_parser_version": row.profile_parser_version,
+            "profile_field_state": row.profile_field_state or {},
+            "profile_observation_status": row.profile_observation_status,
+            "profile_stale": stale,
+            "profile_status": "not_captured" if captured is None else "stale" if stale else row.profile_observation_status or "partial",
+            "product_count_captured_at": row.product_count_captured_at}
+
+
+def profile_snapshot_summary(row):
+    return {"id": str(row.id), "shop_id": str(row.shop_id), "task_id": str(row.task_id),
+            "platform_shop_id": str(row.platform_shop_id),
+            "platform": row.platform, "region": row.region,
+            "name": row.canonical_name, "shop_url": row.canonical_url,
+            **profile_values(row), "scheduled_for": row.scheduled_for, "captured_at": row.captured_at,
+            "source_url": row.source_url, "parser_version": row.parser_version,
+            "field_state": row.field_state or {}, "observation_status": row.observation_status}
+
+
+def latest_profile_task(db, shop, request):
+    task = db.scalar(select(CrawlTask).where(*scope(CrawlTask, request),
+        CrawlTask.task_type == TaskType.SHOP_PROFILE, CrawlTask.resource_type == "shop",
+        CrawlTask.resource_id == str(shop.id)).order_by(CrawlTask.scheduled_for.desc(), CrawlTask.id.desc()).limit(1))
+    if task is None:
+        return None
+    attempt = db.scalar(select(CrawlAttempt).where(CrawlAttempt.task_id == task.id)
+                        .order_by(CrawlAttempt.attempt_no.desc()).limit(1))
+    summary = task_summary(task)
+    result = {key: summary[key] for key in (
+        "id", "task_id", "status", "attempt_count", "max_attempts", "scheduled_for", "available_at", "started_at", "finished_at", "progress")}
+    # Legacy raw errors, request URLs and evidence paths are deliberately not public API fields.
+    result["last_attempt"] = None if attempt is None else {
+        "attempt_no": attempt.attempt_no, "succeeded": attempt.succeeded,
+        "error_type": attempt.error_type if isinstance(attempt.error_type, str) and re.fullmatch(r"[a-z][a-z0-9_]{0,63}", attempt.error_type) else None,
+        "response_status": attempt.response_status, "started_at": attempt.started_at, "finished_at": attempt.finished_at}
+    return result
 
 
 def scope(model, request):
@@ -41,10 +113,13 @@ def task_summary(task):
     progress = {key: value for key, value in (task.checkpoint or {}).items()
                 if key in {"page_number", "page_products", "new_products", "new_detail_tasks", "has_more", "complete", "next_task_created",
                            "detail_updated", "stale_observation_skipped", "variants_seen", "variants_upserted", "new_variants", "attribute_conflicts",
-                           "snapshots_written", "variant_snapshots_written", "events_detected", "events_written", "baseline", "comparison_skipped", "window_already_saved", "change_task_created", "images_upserted"}
+                           "snapshots_written", "variant_snapshots_written", "events_detected", "events_written", "baseline", "comparison_skipped", "window_already_saved", "change_task_created", "images_upserted", "content_saved", "content_complete", "content_nodes", "content_parameters", "profile_updated", "product_count_updated",
+                           "reviews_seen", "reviews_inserted", "reviews_updated", "stale_reviews_skipped"}
                 and type(value) in {int, bool}}
     if (task.checkpoint or {}).get("stop_reason") in {"page_saved", "source_exhausted", "page_budget"}:
         progress["stop_reason"] = task.checkpoint["stop_reason"]
+    if (task.checkpoint or {}).get("observation_status") in {"complete", "partial"}:
+        progress["observation_status"] = task.checkpoint["observation_status"]
     for key in ("snapshot_id", "previous_snapshot_id"):
         value = (task.checkpoint or {}).get(key)
         if value is None or isinstance(value, str) and value.isdecimal():
@@ -55,15 +130,17 @@ def task_summary(task):
             "priority": task.priority, "available_at": task.available_at, "scheduled_for": task.scheduled_for,
             "started_at": task.started_at, "finished_at": task.finished_at,
             "worker_id": task.worker_id, "lease_expires_at": task.lease_expires_at, "progress": progress,
-            "capture_mode": "images_only" if (task.payload or {}).get("capture_mode") == "images_only" else "full"}
+            "capture_mode": (task.payload or {}).get("capture_mode", "full") if (task.payload or {}).get("capture_mode", "full") in {"full", "images_only", "media_content_only"} else "unknown"}
 
 
 @router.get("/capabilities")
 def capabilities(request: Request):
-    implemented = handler_registry()
+    implemented = set(handler_registry()) | {TaskType.PRODUCT_REVIEWS}
     return {"platform": request.app.state.settings.platform, "region": request.app.state.settings.region,
             "implemented_task_types": sorted(implemented),
             "enabled_task_types": request.app.state.settings.enabled_task_types,
+            "product_detail_capture_modes": ["full", "images_only", "media_content_only"],
+            "image_backfill_enabled": request.app.state.settings.image_backfill_enabled,
             "unimplemented_task_types": [kind for kind in TaskType if kind not in implemented],
             "writes_enabled": request.app.state.settings.api_token is not None}
 
@@ -83,11 +160,52 @@ def shops(request: Request, db: Db, limit: Limit = 20, after_id: After = 0, with
     if with_url:
         query = query.where(Shop.canonical_url.is_not(None))
     rows = db.scalars(query.order_by(Shop.id).limit(limit)).all()
-    return {"items": [{"id": str(row.id), "platform_shop_id": row.platform_shop_id,
-                       "name": row.canonical_name, "shop_url": row.canonical_url,
-                       "discovery_category": row.discovery_category, "currency": row.currency,
-                       "status": row.status, "last_seen_at": row.last_seen_at} for row in rows],
+    now = datetime.now(timezone.utc)
+    return {"items": [shop_summary(row, request.app.state.settings, now=now) for row in rows],
             "next_after_id": str(rows[-1].id) if len(rows) == limit else None}
+
+
+@router.get("/shop-profiles/coverage")
+def profile_coverage(request: Request, db: Db):
+    rows = db.scalars(select(Shop).where(*scope(Shop, request), Shop.canonical_url.is_not(None))).all()
+    settings = request.app.state.settings
+    return {"platform": settings.platform, "region": settings.region,
+            **shop_profile_coverage(db, rows, interval_seconds=settings.shop_profile_interval_seconds)}
+
+
+@router.get("/shops/{shop_id}")
+def shop_detail(shop_id: int, request: Request, db: Db):
+    shop = db.scalar(select(Shop).where(Shop.id == shop_id, *scope(Shop, request)))
+    if shop is None:
+        raise HTTPException(404, "shop_not_found")
+    return {**shop_summary(shop, request.app.state.settings), "first_seen_at": shop.first_seen_at,
+            "latest_profile_task": latest_profile_task(db, shop, request)}
+
+
+@router.get("/shops/{shop_id}/snapshots")
+def shop_snapshots(shop_id: int, request: Request, db: Db, limit: Limit = 20, after_id: ProfileAfter = 0,
+                   captured_from: datetime | None = None, captured_to: datetime | None = None):
+    for value in (captured_from, captured_to):
+        if value is not None and value.tzinfo is None:
+            raise HTTPException(422, "profile_time_requires_timezone")
+    captured_from = captured_from.astimezone(timezone.utc) if captured_from is not None else None
+    captured_to = captured_to.astimezone(timezone.utc) if captured_to is not None else None
+    if captured_from is not None and captured_to is not None and captured_from >= captured_to:
+        raise HTTPException(422, "invalid_profile_time_range")
+    shop = db.scalar(select(Shop).where(Shop.id == shop_id, *scope(Shop, request)))
+    if shop is None:
+        raise HTTPException(404, "shop_not_found")
+    query = select(ShopProfileSnapshot).where(ShopProfileSnapshot.shop_id == shop.id,
+        *scope(ShopProfileSnapshot, request), ShopProfileSnapshot.id > after_id)
+    if captured_from is not None:
+        query = query.where(ShopProfileSnapshot.captured_at >= captured_from)
+    if captured_to is not None:
+        query = query.where(ShopProfileSnapshot.captured_at < captured_to)
+    rows = db.scalars(query.order_by(ShopProfileSnapshot.id).limit(limit + 1)).all()
+    more = len(rows) > limit
+    rows = rows[:limit]
+    return {"shop_id": str(shop.id), "items": [profile_snapshot_summary(row) for row in rows],
+            "next_after_id": str(rows[-1].id) if more else None}
 
 
 @router.get("/products")
@@ -261,8 +379,8 @@ class CreateTask(BaseModel):
 
     @model_validator(mode="after")
     def only_snapshots_accept_window(self):
-        if self.scheduled_for is not None and self.task_type != TaskType.PRODUCT_SNAPSHOT:
-            raise ValueError("scheduled_for 仅用于商品快照。")
+        if self.scheduled_for is not None and self.task_type not in {TaskType.PRODUCT_SNAPSHOT, TaskType.SHOP_PROFILE}:
+            raise ValueError("scheduled_for 仅用于商品快照或店铺档案。")
         return self
 
     @field_validator("resource_id")
@@ -275,6 +393,8 @@ class CreateTask(BaseModel):
 
 @router.post("/tasks", dependencies=[Depends(require_write_token)])
 def create_task(body: CreateTask, request: Request):
+    if body.task_type == TaskType.PRODUCT_REVIEWS:
+        raise HTTPException(422, "use_product_reviews_collect_endpoint")
     if body.task_type not in handler_registry():
         raise HTTPException(501, "collector_not_implemented")
     if body.task_type not in request.app.state.settings.enabled_task_types:
@@ -282,6 +402,19 @@ def create_task(body: CreateTask, request: Request):
     with session_scope(request.app.state.factory) as db:
         if body.task_type == TaskType.REPORT_GENERATION:
             raise HTTPException(422, "use_reports_jobs_endpoint")
+        if body.task_type == TaskType.SHOP_PROFILE:
+            shop = db.scalar(select(Shop).where(Shop.id == int(body.resource_id), *scope(Shop, request)).with_for_update())
+            if shop is None:
+                raise HTTPException(404, "shop_not_found")
+            if not shop.canonical_url or shop_id_from_url(shop.canonical_url) != shop.platform_shop_id:
+                raise HTTPException(409, "shop_url_not_verified")
+            window = body.scheduled_for or shop_profile_window(database_now(db), request.app.state.settings.shop_profile_interval_seconds)
+            created = ensure_shop_profile_task(db, shop, window)
+            task = db.scalar(select(CrawlTask).where(*scope(CrawlTask, request),
+                CrawlTask.task_type == TaskType.SHOP_PROFILE, CrawlTask.resource_type == "shop",
+                CrawlTask.resource_id == str(shop.id), CrawlTask.scheduled_for == window)
+                .order_by(CrawlTask.id).limit(1))
+            return {"created": created, "task": task_summary(task)}
         if body.task_type in {TaskType.PRODUCT_SNAPSHOT, TaskType.CHANGE_DETECTION}:
             product = db.scalar(select(Product).where(Product.id == int(body.resource_id), *scope(Product, request)).with_for_update())
             if product is None: raise HTTPException(404, "product_not_found")

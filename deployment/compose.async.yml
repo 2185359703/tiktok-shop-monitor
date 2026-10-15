@@ -1,0 +1,15 @@
+# Combine with compose.server.yml; do not combine with old frontend bind mounts.
+# APP_IMAGE must identify the image built from the committed release archive.
+services:
+  mysql:
+    mem_limit: 1g
+    command: ["--character-set-server=utf8mb4", "--collation-server=utf8mb4_0900_ai_ci", "--default-time-zone=+00:00", "--innodb-buffer-pool-size=536870912", "--max-connections=70", "--performance-schema=OFF", "--skip-log-bin"]
+  api:
+    image: ${APP_IMAGE:?Set APP_IMAGE to the committed application image}
+  worker:
+    image: ${APP_IMAGE:?Set APP_IMAGE to the committed application image}
+    stop_grace_period: 300s
+  scheduler:
+    image: ${APP_IMAGE:?Set APP_IMAGE to the committed application image}
+  collection:
+    image: ${APP_IMAGE:?Set APP_IMAGE to the committed application image}

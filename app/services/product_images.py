@@ -46,6 +46,8 @@ def persist_product_images(session, product_id, images, *, source_url, source_ki
                 setattr(row, field, value)
         saved += 1
     session.flush()
+    from app.services.analytics_refresh import mark_products
+    mark_products(session, [product_id])
     return saved
 
 

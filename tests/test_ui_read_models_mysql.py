@@ -1,0 +1,120 @@
+"""Exercise MySQL-specific projection, JSON, session and lease behavior."""
+
+from datetime import timedelta
+
+import pytest
+from sqlalchemy import select, text
+from sqlalchemy.orm import sessionmaker
+
+from app.models.analytics_read import AnalyticsSnapshot
+from app.services.analytics_projection import build_product, publish_product
+from app.services.analytics_queries import list_products, parameters
+from app.services.analytics_refresh import claim, complete, enqueue, now
+from app.services.analytics_runtime import source_reader
+from app.services.analytics_snapshot import build_snapshot, publish_snapshot, read_snapshot
+from app.services.product_detail import persist_product_detail
+from app.services.snapshot_service import persist_snapshot
+from app.settings import Settings
+from test_product_detail import snapshot
+from test_product_detail_storage import initial
+
+
+def test_native_async_api_can_read_and_schedule_snapshots(mysql_engine, monkeypatch):
+    from fastapi.testclient import TestClient
+    from sqlalchemy import delete
+    from app.main import create_app
+    from app.models.analytics_read import AnalyticsRefreshRequest
+    from app.services.analytics_refresh import job_row, scope
+    factory = sessionmaker(mysql_engine)
+    config = Settings(database_url=mysql_engine.url.render_as_string(hide_password=False))
+    monkeypatch.setenv("ANALYTICS_ENABLED", "1")
+    try:
+        with factory.begin() as db:
+            row = job_row(db, "control", {**scope(config), "name": "backfill"})
+            row.parameters = {**row.parameters, "ready": True}
+        with TestClient(create_app(config)) as client:
+            assert client.get("/api/v2/ui/bootstrap").json()["ready"]
+            assert client.get("/api/v2/catalog/products").status_code == 200
+            response = client.get("/api/v2/catalog/stats")
+            assert response.status_code == 202
+            assert response.json()["_meta"]["status"] == "pending"
+    finally:
+        with factory.begin() as db:
+            db.execute(delete(AnalyticsSnapshot))
+            db.execute(delete(AnalyticsRefreshRequest))
+
+
+def test_mysql_projection_and_snapshots_preserve_real_snapshot_fields(session):
+    product, task = initial(session)
+    page = snapshot()
+    persist_product_detail(session, task, page)
+    task.payload = {**task.payload, "pricing_context": "public_listed"}
+    persist_snapshot(session, task, page, update_current=False)
+    config = Settings()
+    rows = build_product(session, config, product.id, 1)
+    publish_product(session, config, rows)
+    current = list_products(session, parameters(config))
+    assert current["items"][0]["variant_count"] == 2
+    assert len(current["items"]) == 1
+    historical = next(row for row in rows if row["basis"] == "latest_valid_snapshot")["payload"]
+    assert historical["title"] == page.detail.title
+    assert historical["sku_count"] == 2 and historical["snapshot_id"] is not None
+    for kind in ("overview", "workbench", "catalog_stats", "events_summary", "task_counts", "matching_candidates"):
+        params = parameters(config)
+        result, stamp = build_snapshot(session, config, kind, params)
+        publish_snapshot(session, kind, params, 1, result, stamp)
+        session.flush()
+        assert read_snapshot(session, kind, params)[0] == 200
+
+
+def test_mysql_refresh_coalescing_is_fenced(session):
+    row = enqueue(session, "catalog_stats", parameters(Settings()))
+    lease = claim(session, Settings())
+    assert lease is not None
+    enqueue(session, "catalog_stats", parameters(Settings()), force=True)
+    complete(session, lease, lambda db: publish_snapshot(db, lease.kind, lease.parameters, lease.revision,
+                                                       {"total": 0}, now(db)))
+    assert row.requested_revision == 2 and row.completed_revision == 1
+
+
+def test_mysql_query_budgets_are_restored_on_pool_return(mysql_engine):
+    factory = sessionmaker(mysql_engine)
+    with factory() as db:
+        original = db.execute(text("SELECT @@SESSION.max_execution_time, @@SESSION.innodb_lock_wait_timeout")).one()
+    with source_reader(factory) as db:
+        assert db.scalar(text("SELECT @@SESSION.max_execution_time")) == 3000
+        assert db.scalar(text("SELECT @@SESSION.innodb_lock_wait_timeout")) == 1
+    with factory() as db:
+        assert db.execute(text("SELECT @@SESSION.max_execution_time, @@SESSION.innodb_lock_wait_timeout")).one() == original
+    with pytest.raises(RuntimeError):
+        with source_reader(factory) as db:
+            raise RuntimeError("interrupted")
+    with factory() as db:
+        assert db.execute(text("SELECT @@SESSION.max_execution_time, @@SESSION.innodb_lock_wait_timeout")).one() == original
+
+
+def test_native_async_worker_publishes_without_sync_driver_io(mysql_engine, monkeypatch):
+    import asyncio
+    from sqlalchemy import delete
+    from app.models.analytics_read import AnalyticsRefreshRequest
+    from app.services.analytics_refresh import key_for
+    from app.services.async_analytics import AsyncAnalyticsRunner
+    from app.storage.async_database import AsyncDatabase, make_async_engine
+    config = Settings(database_url=mysql_engine.url.render_as_string(hide_password=False), analytics_concurrency=1)
+    monkeypatch.setenv("ANALYTICS_ENABLED", "1")
+    params = parameters(config, {"q": "ASYNC TEST FIXTURE"})
+    async def check():
+        database = AsyncDatabase(make_async_engine(config.database_url))
+        try:
+            await database.transaction(enqueue, "catalog_stats", params)
+            assert await AsyncAnalyticsRunner(database, config).run_once()
+            value = await database.read(lambda db: db.get(AnalyticsSnapshot, (2, key_for("catalog_stats", params))).payload)
+            assert value["total"] == 0
+        finally:
+            await database.close()
+    try:
+        asyncio.run(check())
+    finally:
+        with sessionmaker(mysql_engine).begin() as db:
+            db.execute(delete(AnalyticsSnapshot))
+            db.execute(delete(AnalyticsRefreshRequest))

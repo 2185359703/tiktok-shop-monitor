@@ -46,7 +46,7 @@ python -m venv .venv
 | `[report].report_directory` | data/exports/reports | HTML、Markdown 和 JSON 报告导出目录 |
 | `API_HOST / API_PORT` | 127.0.0.1 / 8000 | 监听地址 |
 | `lease_seconds / heartbeat_seconds` | 120 / 15 | 租约与心跳周期 |
-| `minimum_interval_seconds` | 2.0 | 同一市场所有 Worker 的最小请求间隔 |
+| `minimum_interval_seconds` | 1.0 | 同一市场所有 Worker 的最小请求间隔 |
 | `access_pause_seconds` | 900 | 遇到访问限制的市场暂停时间 |
 | `dispatch_batch_size / dispatch_scan_limit` | 100 / 1000 | 每轮通知量与扫描上限 |
 

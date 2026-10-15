@@ -1,6 +1,6 @@
 # 数据字典与写入约定
 
-数据库名默认为 tiktok_shop_monitor，以连接配置中的名称为准。当前市场是美国站 US，币种是 USD。表结构的定义源是 app/models；可执行建表 SQL 位于 migrations/001_initial_schema.sql。
+数据库名默认为 tiktok_shop_monitor，以连接配置中的名称为准。当前市场是美国站 US，币种是 USD。表结构的定义源是 app/models；完整当前建表 SQL 位于 migrations/current_schema.sql，001/002 保留历史基础定义，既有库使用对应增量迁移。
 
 ## 通用字段与约束
 
@@ -77,6 +77,14 @@ UTCDateTime 在读库时返回带 UTC 时区的 datetime，写入带时区 datet
 - 查询索引：(region, status, discovery_category)。
 - product_count 是平台可见数量，可空；本系统已监测商品数应从 products 查询。
 - 解析后使用 Upsert 更新名称和 URL，不修改主键或平台 ID。
+
+### 店铺档案扩展状态（2026-10-15）
+
+上表列出原有基础字段。2026-10-15 实现前，本地配置库有 102 家店铺，`follower_count` 和 `rating` 全为空；这一历史核查不代表当前采集结果或服务器部署库。新增 `shop_profile` 已接入真实店铺档案采集，按独立观察时间更新这些字段。
+
+当前扩展字段包含 `logo_url`、`verification_type`、`identity_label_key/text`、`follower_count_text`、`sales_count/text`、`global_sales_count/text`、`video_count/text`、`product_count_text`、`review_count`、`product_count_captured_at`，以及 `profile_captured_at/source_url/parser_version/response_hash/evidence_path/field_state/observation_status`。计数使用 BIGINT UNSIGNED，文本、UTC 时间、来源与状态定义见[店铺档案说明](shop-profile-collection.md)。店铺级销量与商品级销量分开，缺失保留 NULL，缩写不转换为未经来源证实的精确值。
+
+`shop_profile_snapshots` 保存上述本次观察、店铺名与入口、平台店铺 ID、`shop_id`、`task_id`、市场、采集窗口与真实观察时间。`task_id` 唯一，`(platform, region, shop_id, scheduled_for)` 唯一；店铺与任务外键均 RESTRICT，历史索引为 `(shop_id, captured_at, id)`。同一窗口重试不覆盖快照，不同窗口值相同仍保存。新增表及字段通过 [006_shop_profiles.sql](../migrations/006_shop_profiles.sql) 或可重复执行的 `python -m scripts.migrate_shop_profiles --execute` 升级，不能在旧库直接重跑初始建表脚本代替迁移。
 
 ## 3. shop_seed_links
 

@@ -183,6 +183,8 @@ def confirm_match(session, settings, *, left_product_id, right_product_id, match
             if note is not None:
                 sku.note = note
     session.flush()
+    from app.services.analytics_refresh import mark_market
+    mark_market(session, settings.platform, settings.region, immediate=True)
     return match, sku, created
 
 
@@ -228,6 +230,8 @@ def review_match(session, settings, match_id, status, *, sku_match_id=None, note
             sku.status, sku.reviewed_at = MatchStatus.REJECTED, row.reviewed_at
     # Reconfirming a product pair does not silently restore its rejected SKU mappings.
     session.flush()
+    from app.services.analytics_refresh import mark_market
+    mark_market(session, settings.platform, settings.region, immediate=True)
     return match
 
 

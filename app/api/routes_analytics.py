@@ -3,12 +3,17 @@
 from decimal import Decimal
 from typing import Annotated, Literal
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi import Depends, HTTPException, Query, Request
 
 from app.services.analytics_service import build_workbench, list_analytics_products
+from app.reports.cache import AsyncReportCache
+from app.storage.async_database import app_call
 
 
-router = APIRouter(prefix="/api/v1/analytics", tags=["analytics"])
+from app.api.async_router import AsyncAPIRouter
+
+
+router = AsyncAPIRouter(prefix="/api/v1/analytics", tags=["analytics"])
 
 
 def analytics_filters(
@@ -35,17 +40,27 @@ def analytics_filters(
 
 
 @router.get("/workbench")
-def workbench(request: Request, options: Annotated[dict, Depends(analytics_filters)],
+async def workbench(request: Request, options: Annotated[dict, Depends(analytics_filters)],
               lookback_hours: Annotated[int, Query(ge=1, le=720)] = 24):
-    with request.app.state.factory() as db:
-        return build_workbench(db, request.app.state.settings, lookback_hours=lookback_hours, **options)
+    if not hasattr(request.app.state, "workbench_cache"):
+        request.app.state.workbench_cache = AsyncReportCache(ttl_seconds=30)
+    cache = request.app.state.workbench_cache
+    config = request.app.state.settings
+    normalized = {**options, "q": (options.get("q") or "").strip() or None,
+                  "currency": (options.get("currency") or config.currency).upper()}
+    key = (config.platform, config.region, config.pricing_context, lookback_hours, tuple(sorted(normalized.items())))
+    def build():
+        with request.app.state.factory() as db:
+            return build_workbench(db, config, lookback_hours=lookback_hours, **options)
+    return await cache.get_or_build(key, lambda: app_call(request, build))
 
 
 @router.get("/products")
 def products(request: Request, options: Annotated[dict, Depends(analytics_filters)],
              page: Annotated[int, Query(ge=1)] = 1,
              page_size: Annotated[int, Query(ge=1, le=100)] = 24,
+             include_stats: bool = True,
              sort: Literal["recent", "price_asc", "price_desc", "title", "title_desc", "shop_asc", "shop_desc",
                            "stock_asc", "stock_desc", "sku_count_asc", "sku_count_desc", "rating_desc", "reviews_desc"] = "recent"):
     with request.app.state.factory() as db:
-        return list_analytics_products(db, request.app.state.settings, page=page, page_size=page_size, sort=sort, **options)
+        return list_analytics_products(db, request.app.state.settings, page=page, page_size=page_size, sort=sort, include_stats=include_stats, **options)

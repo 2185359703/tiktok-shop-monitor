@@ -84,3 +84,12 @@ body[data-view='products'] .metric-strip{margin-bottom:12px}
 .product-table{--product-name-width:310px;table-layout:fixed;min-width:calc(var(--product-name-width) + var(--rest-columns-width))}
 .product-name-column{width:var(--product-name-width)}
 @media(max-width:650px){.product-table{--product-name-width:200px}.product-table .sticky-product{min-width:200px;width:200px;max-width:200px}.product-table .sticky-product .product-title{max-width:100%}}
+
+/* Shop profile observations extend the existing table and detail drawer. */
+.shop-avatar{flex-shrink:0;overflow:hidden}.shop-avatar img{width:100%;height:100%;object-fit:contain}.shop-avatar img[hidden],.shop-logo-fallback[hidden]{display:none}
+.shop-name-line{display:flex;align-items:center;gap:6px;flex-wrap:wrap}.shop-profile-table .shop-name-line{flex-wrap:nowrap}.shop-profile-table .product-title{max-width:190px}.shop-profile-table .table-main>div{min-width:0}
+.shop-blue-v{display:inline-flex;align-items:center;justify-content:center;flex-shrink:0;width:15px;height:15px;border-radius:50%;background:#24c4d7;color:#fff}.shop-blue-v .icon{width:11px;height:11px;stroke-width:3}
+.shop-official-label{display:inline-flex;padding:2px 5px;border-radius:3px;background:#26354c;color:#fff;font-size:8px;line-height:1.5;white-space:nowrap}
+.shop-profile-heading{display:flex;align-items:center;gap:16px}.shop-profile-heading>div{min-width:0}.shop-profile-heading .detail-subtitle{margin:5px 0 8px}.shop-profile-avatar{width:70px;height:70px;border:1px solid var(--line);border-radius:50%;font-size:20px;background:#fff}
+.shop-profile-stats .detail-stat strong{overflow-wrap:anywhere}.shop-metric-state{display:block;margin-top:6px;color:#93a6c2;font-size:9px}.shop-stale{color:#b28742}.shop-history-footer{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-top:12px;font-size:9px;color:#95a7c5}
+@media(max-width:650px){.shop-profile-heading{gap:11px}.shop-profile-avatar{width:55px;height:55px}.shop-history-footer{flex-wrap:wrap}.shop-profile-heading .shop-name-line{gap:5px}}

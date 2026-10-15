@@ -3,6 +3,7 @@
 import argparse
 import json
 import os
+import shlex
 import subprocess
 from pathlib import Path
 from uuid import uuid4
@@ -16,12 +17,22 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--image", default="tiktok-shop-monitor:server")
     parser.add_argument("--source-root", type=Path)
+    parser.add_argument("--app-source", type=Path)
+    parser.add_argument("--test-path", action="append", default=[])
     parser.add_argument("--log-name", default="image-tests.log")
     args = parser.parse_args()
     root = Path(__file__).resolve().parents[1]
     source_root = args.source_root.resolve() if args.source_root else root
     if not source_root.is_relative_to(root) or not (source_root / "tests/conftest.py").is_file():
         raise ValueError("检查源码必须位于本项目内并包含隔离测试入口。")
+    app_mount = []
+    if args.app_source:
+        app_source = args.app_source.resolve()
+        if not app_source.is_relative_to(root) or not (app_source / "main.py").is_file():
+            raise ValueError("覆盖应用必须位于本项目内。")
+        app_mount = ["--mount", f"type=bind,source={app_source},target=/opt/tiktok-shop-monitor/app,readonly"]
+    if any(not path.startswith("tests/") or ".." in Path(path).parts or not (source_root / path).is_file() for path in args.test_path):
+        raise ValueError("检查路径必须是本项目测试文件。")
     if Path(args.log_name).name != args.log_name or not args.log_name.endswith(".log"):
         raise ValueError("检查日志必须是单个 .log 文件名。")
     values = dict(line.split("=", 1) for line in (root / "deployment.env").read_text().splitlines() if line and not line.startswith("#"))
@@ -44,8 +55,10 @@ def main():
         created = True
         result = subprocess.run(["docker", "run", "--rm", "--user", "0", "--network", f"container:{mysql_id}",
              "--mount", f"type=bind,source={source_root / 'tests'},target=/opt/tiktok-shop-monitor/tests,readonly",
+             "--mount", f"type=bind,source={source_root / 'deployment'},target=/opt/tiktok-shop-monitor/deployment,readonly",
+             *app_mount,
              "--env", "MYSQL_TEST_URL", "--env", "REDIS_TEST_URL", args.image, "sh", "-c",
-             "python -m pip install --quiet 'pytest>=8,<9' && python -m pytest -q"], env=environment, capture_output=True, text=True)
+             "python -m pip install --quiet 'pytest>=8,<9' && " + shlex.join(["python", "-m", "pytest", "-q", *args.test_path])], env=environment, capture_output=True, text=True)
         evidence = root / "data/samples/deployment"
         evidence.mkdir(parents=True, exist_ok=True)
         (evidence / args.log_name).write_text(result.stdout + result.stderr, encoding="utf-8")

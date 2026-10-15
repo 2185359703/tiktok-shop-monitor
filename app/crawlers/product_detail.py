@@ -15,6 +15,7 @@ import httpx
 from app.crawlers.product_list import annotate_failure, decimal_value, identifier, integer_count, product_id_from_url, text_field
 from app.crawlers.public_shop import PublicPageError, PublicShopClient, RouterScriptParser, public_url
 from app.crawlers.product_images import IMAGE_SOURCE_VERSION, ImageCandidate, detail_images
+from app.crawlers.product_content import ProductContentProjection, parse_product_content
 from app.models import StockStatus
 from app.services.seed_importer import fingerprint
 
@@ -219,6 +220,8 @@ class ProductDetail:
     sales_count_text: str | None
     variants: tuple[VariantDetail, ...]
     images: tuple[ImageCandidate, ...] = ()
+    content: ProductContentProjection | None = None
+    content_source: dict | None = None
 
 
 def parse_detail_block(block, source_url, expected_shop_id):
@@ -277,9 +280,20 @@ def parse_detail_block(block, source_url, expected_shop_id):
                              attributes, raw_attributes, sorted({variant.color for variant in variants if variant.color}),
                              sorted({variant.size for variant in variants if variant.size}), "USD", text_field(price.get("real_price"), 255),
                              minimum, maximum, origin_min, origin_max, discount, stock, rating, integer_count(review.get("review_count")),
-                             sold, sold_text, variants, detail_images(info))
+                             sold, sold_text, variants, detail_images(info), parse_product_content(info), content_source_projection(info))
     except (KeyError, TypeError, ValueError, AttributeError):
         raise invalid("invalid_product_detail_structure") from None
+
+
+def content_source_projection(info):
+    """Keep only merchant content fields for diagnosing unsupported shapes.
+
+    This public allowlist excludes page components, reviews, requests, account
+    data and session state. It lives in task-local evidence, outside Git/DB.
+    """
+    value = {key: info[key] for key in ("specifications", "desc_blocks") if key in info}
+    encoded = json.dumps(value, ensure_ascii=False, allow_nan=False)
+    return json.loads(encoded) if len(encoded.encode("utf-8")) <= 1_000_000 else None
 
 
 def parse_product_detail(html, source_url, expected_shop_id):
@@ -324,7 +338,9 @@ class DetailSnapshot:
                 raise ValueError
             raw = record["detail"]
             product_fields = ("price_min", "price_max", "original_price_min", "original_price_max", "discount_rate", "rating")
-            values = {key: raw[key] for key in ProductDetail.__dataclass_fields__ if key not in {"variants", "images"}}
+            values = {key: raw[key] for key in ProductDetail.__dataclass_fields__ if key not in {"variants", "images", "content", "content_source"}}
+            values["content"] = ProductContentProjection.from_record(raw["content"]) if raw.get("content") is not None else None
+            values["content_source"] = content_source_projection(raw["content_source"]) if isinstance(raw.get("content_source"), dict) else None
             if raw.get("images") and record.get("image_source_version") != IMAGE_SOURCE_VERSION:
                 raise ValueError
             values["images"] = tuple(ImageCandidate.from_record(row) for row in raw.get("images", []))

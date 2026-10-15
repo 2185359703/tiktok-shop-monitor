@@ -145,8 +145,11 @@ def test_http_uses_shared_gate_and_different_id_redirect_is_rejected():
 
 def test_evidence_does_not_save_reviews_aigc_shipping_or_warehouse(tmp_path):
     value = block()
-    value["review_info"] = {"product_reviews": ["do-not-save-secret"]}
-    value["aigc_info"] = {"long_text": "do-not-save-secret"}
-    value["product_info"]["skus"][0]["warehouse_id"] = "do-not-save-secret"
+    # The merchant-description fixture has its own script marker. Use a
+    # different sentinel to test exclusion of these unrelated private fields.
+    excluded = "excluded-review-aigc-warehouse-value"
+    value["review_info"] = {"product_reviews": [excluded]}
+    value["aigc_info"] = {"long_text": excluded}
+    value["product_info"]["skus"][0]["warehouse_id"] = excluded
     record = snapshot(value).save_evidence(tmp_path).read_text(encoding="utf-8")
-    assert "do-not-save-secret" not in record and "warehouse_id" not in record
+    assert excluded not in record and "warehouse_id" not in record

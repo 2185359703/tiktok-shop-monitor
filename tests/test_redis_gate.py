@@ -53,6 +53,6 @@ def test_real_redis_request_spacing_is_shared_between_workers(redis_gate):
         redis_gate.wait_turn(Event())
         began = monotonic()
         second.wait_turn(Event())
-        assert monotonic() - began >= 1.8
+        assert monotonic() - began >= redis_gate.settings.minimum_interval_seconds - 0.1
     finally:
         second.close()

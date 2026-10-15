@@ -238,8 +238,11 @@ docs/             使用指南、设计说明与历史验证记录
 | 启动、环境配置、Docker 与 API | [运行指南](docs/runtime-guide.md) |
 | 界面、分析口径、图片与竞品匹配 | [前端工作台](docs/frontend.md) · [分析工作台](docs/analytics-workbench.md) |
 | 系统如何组织，任务如何恢复 | [架构设计](docs/architecture.md) · [任务流转](docs/task-flow.md) |
+| 异步数据库、并发采集与后台任务 | [异步后端运行说明](docs/backend-async.md) |
 | 种子来源、导入与店铺核验 | [种子说明](data/seed/README.md) · [种子导入](docs/seed-discovery.md) · [入口核验](docs/seed-link-verification.md) |
+| 店铺 Logo、认证、粉丝、累计已售和视频数 | [店铺档案采集与历史快照](docs/shop-profile-collection.md) |
 | 商品发现、分页与 SKU 补全 | [商品发现](docs/product-discovery.md) · [商品详情](docs/product-detail.md) |
+| 评论正文、协程 Worker、分页与采集状态 | [商品评论采集](docs/product-reviews.md) |
 | 历史价格、库存事件与周期监测 | [快照与变化检测](docs/snapshot-monitoring.md) |
 | 报告口径、导出与下载 | [报告说明](docs/monitoring-reports.md) |
 | 表结构、字段语义与迁移 | [数据字典](docs/data-dictionary.md) · [当前 SQL](migrations/current_schema.sql) |

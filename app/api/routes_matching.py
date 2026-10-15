@@ -2,7 +2,7 @@
 
 from typing import Annotated, Literal
 
-from fastapi import APIRouter, Depends, HTTPException, Path, Query, Request
+from fastapi import Depends, HTTPException, Path, Query, Request
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from app.api.routes import require_write_token
@@ -14,7 +14,10 @@ from app.services.matching_service import (
 from app.storage.database import session_scope
 
 
-router = APIRouter(prefix="/api/v1", tags=["matching"])
+from app.api.async_router import AsyncAPIRouter
+
+
+router = AsyncAPIRouter(prefix="/api/v1", tags=["matching"])
 Identifier = Annotated[int, Field(ge=1, le=18446744073709551615)]
 PathIdentifier = Annotated[int, Path(ge=1, le=18446744073709551615)]
 

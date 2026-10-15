@@ -36,7 +36,7 @@ class CrawlTask(PrimaryKeyMixin, MarketMixin, TimestampMixin, Base):
     idempotency_key: Mapped[str | None] = mapped_column(HASH_TYPE, comment="任务类型、资源、窗口与上下文的SHA-256幂等键")
     task_type: Mapped[TaskType] = mapped_column(
         enum_type(TaskType), nullable=False,
-        comment="任务类型：shop_discovery=店铺发现，product_discovery=商品发现，product_detail=详情，product_snapshot=快照，change_detection=变化检测，report_generation=报表"
+        comment="任务类型：shop_discovery=店铺发现，shop_profile=店铺档案，product_discovery=商品发现，product_detail=详情，product_reviews=评论，product_snapshot=快照，change_detection=变化检测，report_generation=报表"
     )
     resource_type: Mapped[ResourceType] = mapped_column(
         enum_type(ResourceType), nullable=False,
