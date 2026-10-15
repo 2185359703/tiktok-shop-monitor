@@ -38,8 +38,19 @@ class Release:
         self.record = json.loads(self.record_path.read_text()) if self.record_path.exists() else {}
         if self.record and self.record["commit"] != commit:
             raise ValueError("Release identity was already used by another commit")
-        self.base = ["docker", "compose", "-f", "deployment/compose.server.yml", "-f", "deployment/compose.frontend.yml",
-                     "--env-file", "deployment.env"]
+        files = self.record.get("base_files")
+        if not files:
+            ids = self.run(["docker", "ps", "-q", "--filter", "label=com.docker.compose.project=tiktok-shop-monitor",
+                            "--filter", "label=com.docker.compose.service=api"]).split()
+            if len(ids) != 1:
+                raise ValueError("Expected exactly one live project API")
+            labels = json.loads(self.run(["docker", "inspect", "--format", "{{json .Config.Labels}}", ids[0]]))
+            files = labels.get("com.docker.compose.project.config_files", "").split(",")
+        self.base_files = [Path(name).resolve() for name in files if name]
+        if not self.base_files or any(not path.is_relative_to(self.root) or not path.is_file() for path in self.base_files):
+            raise ValueError("Live Compose files must belong to this project")
+        self.base = ["docker", "compose", *[part for path in self.base_files for part in ("-f", str(path))],
+                     "--env-file", str(self.root / "deployment.env")]
         self.overlay = self.root / "deployment/live-read-models.json"
         self.compose = [*self.base, "-f", str(self.overlay)]
 
@@ -164,11 +175,11 @@ class Release:
         networks = list(api["NetworkSettings"]["Networks"])
         if len(networks) != 1:
             raise ValueError("Expected one application network")
-        for name in ("compose.server.yml", "compose.frontend.yml"):
-            shutil.copy2(self.root / "deployment" / name, self.evidence / ("previous-" + name))
+        for index, path in enumerate(self.base_files):
+            shutil.copy2(path, self.evidence / f"previous-{index}-{path.name}")
         preserved = self.runtime_config(api)
         self.save("preparing", previous_images={name: [c["Config"]["Image"] for c in self.containers(name)] for name in SERVICES},
-                  preserved_runtime=preserved)
+                  preserved_runtime=preserved, base_files=[str(path) for path in self.base_files])
         try:
             self.stop_sources()
             backup = self.backup_schema_and_control(mysql)
