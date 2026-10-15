@@ -9,6 +9,8 @@ import shutil
 import subprocess
 import time
 import urllib.request
+import tempfile
+import hashlib
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -42,10 +44,56 @@ def containers():
     } for r in records]
 
 
+def publish_ui(source, revision):
+    """Point only the existing ShopScope static locations at this release."""
+    snippet = Path('/etc/nginx/snippets/tiktok-shop-monitor-public.conf')
+    if snippet.is_symlink() or not snippet.is_file():
+        raise ValueError('The expected ShopScope Nginx snippet is missing.')
+    original = snippet.read_text(encoding='utf-8')
+    directory = source / 'app/frontend'
+    if not (directory / 'index.html').is_file() or './ui-assets/' not in (directory / 'index.html').read_text(encoding='utf-8'):
+        raise ValueError('The committed UI is not prefix-aware.')
+    pattern = r'(?m)^(\s*(?:root|alias)\s+)/opt/tiktok-shop-monitor/releases/[^;\n]+/app/frontend(/?);'
+    updated, count = re.subn(pattern, lambda m: m[1] + str(directory) + m[2] + ';', original)
+    if count != 2 or 'location = /shopscope/' not in original or 'location ^~ /shopscope/ui-assets/' not in original:
+        raise ValueError('The public static locations differ from the known project layout.')
+    evidence = ROOT / 'data/samples/deployment'
+    (evidence / f'nginx-before-{revision[:12]}.conf').write_text(original, encoding='utf-8')
+    def replace(value):
+        with tempfile.NamedTemporaryFile('w', encoding='utf-8', dir=snippet.parent, prefix='.shopscope-', delete=False) as stream:
+            temporary = Path(stream.name)
+            stream.write(value)
+        temporary.chmod(0o644)
+        os.replace(temporary, snippet)
+    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+    try:
+        replace(updated)
+        command(['nginx', '-t'])
+        command(['systemctl', 'reload', 'nginx'])
+        with opener.open('http://127.0.0.1:8000/openapi.json', timeout=20) as response:
+            schema = json.load(response)
+        schema['servers'] = [{'url': '/shopscope'}]
+        (ROOT / 'deployment/public-openapi.json').write_text(json.dumps(schema, ensure_ascii=False), encoding='utf-8')
+        checks = {}
+        for relative, url in (('index.html', '/shopscope/'), ('app.js', '/shopscope/ui-assets/app.js'),
+                              ('api.js', '/shopscope/ui-assets/api.js'), ('product-detail.js', '/shopscope/ui-assets/product-detail.js')):
+            with opener.open('http://127.0.0.1' + url, timeout=20) as response:
+                checks[relative] = hashlib.sha256(response.read()).hexdigest() == hashlib.sha256((directory / relative).read_bytes()).hexdigest()
+        if not all(checks.values()):
+            raise RuntimeError('Public UI bytes do not match the committed release.')
+    except BaseException:
+        replace(original)
+        command(['nginx', '-t'])
+        command(['systemctl', 'reload', 'nginx'])
+        raise
+    print(json.dumps({'phase': 'public_ui_ready', 'commit': revision, 'checks': checks}), flush=True)
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--commit', required=True)
     parser.add_argument('--execute', action='store_true')
+    parser.add_argument('--publish-ui-only', action='store_true')
     args = parser.parse_args(argv)
     if not re.fullmatch(r'[a-f0-9]{40}', args.commit):
         raise ValueError('A full Git commit is required.')
@@ -56,6 +104,12 @@ def main(argv=None):
     info = json.loads(command(['docker', 'image', 'inspect', image]))[0]
     if info['Config'].get('Labels', {}).get('org.opencontainers.image.revision') != args.commit:
         raise ValueError('Image revision does not match the requested commit.')
+    if args.publish_ui_only:
+        current = [r for r in containers() if r['service'] in SERVICES]
+        if set(r['service'] for r in current) != set(SERVICES) or any(r['image_id'] != info['Id'] for r in current):
+            raise ValueError('Publish UI only after all application services run this image.')
+        publish_ui(source, args.commit)
+        return 0
     env = {**os.environ, 'APP_IMAGE': image}
     compose = ['docker', 'compose', '-f', str(ROOT / 'deployment/compose.server.yml'),
                '-f', str(source / 'deployment/compose.async.yml'), '--env-file', str(ROOT / 'deployment.env')]
@@ -103,6 +157,7 @@ def main(argv=None):
         api = next(r for r in apps if r['service'] == 'api')
         if any(m['target'].startswith('/opt/tiktok-shop-monitor/app/') for m in api['mounts']):
             raise RuntimeError('An old code bind mount is masking the image.')
+        publish_ui(source, args.commit)
         shutil.copy2(source / 'deployment/compose.async.yml', ROOT / 'deployment/compose.async.yml')
         active = {'commit': args.commit, 'image': image, 'image_id': info['Id'], 'deployed_at': datetime.now(timezone.utc).isoformat(),
                   'compose_files': [str(ROOT / 'deployment/compose.server.yml'), str(ROOT / 'deployment/compose.async.yml')],
