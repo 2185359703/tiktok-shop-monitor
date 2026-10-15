@@ -41,7 +41,7 @@ def task_summary(task):
     progress = {key: value for key, value in (task.checkpoint or {}).items()
                 if key in {"page_number", "page_products", "new_products", "new_detail_tasks", "has_more", "complete", "next_task_created",
                            "detail_updated", "stale_observation_skipped", "variants_seen", "variants_upserted", "new_variants", "attribute_conflicts",
-                           "snapshots_written", "variant_snapshots_written", "events_detected", "events_written", "baseline", "comparison_skipped", "window_already_saved", "change_task_created", "images_upserted", "content_saved", "content_complete", "content_nodes", "content_parameters", "profile_updated", "product_count_updated"}
+                           "snapshots_written", "variant_snapshots_written", "events_detected", "events_written", "baseline", "comparison_skipped", "window_already_saved", "change_task_created", "images_upserted", "gallery_complete", "content_saved", "content_complete", "content_nodes", "content_parameters", "profile_updated", "product_count_updated"}
                 and type(value) in {int, bool}}
     if (task.checkpoint or {}).get("stop_reason") in {"page_saved", "source_exhausted", "page_budget"}:
         progress["stop_reason"] = task.checkpoint["stop_reason"]

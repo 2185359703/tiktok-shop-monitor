@@ -24,21 +24,31 @@ def persist_product_images(session, product_id, images, *, source_url, source_ki
     if latest is not None and latest > observed_at:
         return 0
     by_key = {row.image_key: row for row in rows}
-    authoritative = source_kind == "detail"
+    detail_source = source_kind == "detail"
+    authoritative = detail_source and all(image.source_complete for image in images)
     # A listing cover must not replace or expand an already observed detail gallery.
-    if not authoritative and any(row.source_kind == "detail" for row in rows):
+    if not detail_source and any(row.source_kind == "detail" for row in rows):
         return 0
     if authoritative:
         seen = {image.image_key for image in images}
         for row in rows:
             if row.image_key not in seen:
                 row.is_current = False
+    current_detail = [row for row in rows if row.is_current and row.source_kind == "detail"]
+    append_position = max((row.position for row in current_detail), default=-1) + 1
     saved = 0
     for image in images:
         row = by_key.get(image.image_key)
         values = {"image_url": image.image_url, "thumbnail_url": image.thumbnail_url,
                   "source_url": source_url, "source_kind": source_kind, "source_version": IMAGE_SOURCE_VERSION,
                   "role": image.role, "position": image.position, "is_current": True, "observed_at": observed_at}
+        if detail_source and not authoritative and current_detail:
+            if row is not None and row.is_current and row.source_kind == "detail":
+                # A partial source cannot establish a different cover/order.
+                values["role"], values["position"] = row.role, row.position
+            else:
+                values["role"], values["position"] = "gallery", min(append_position, 99)
+                append_position += 1
         if row is None:
             session.add(ProductImage(product_id=product_id, image_key=image.image_key, **values))
         else:

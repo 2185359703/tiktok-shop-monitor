@@ -46,6 +46,7 @@ class ImageCandidate:
     thumbnail_url: str | None
     role: str
     position: int
+    source_complete: bool = True
 
     @classmethod
     def from_record(cls, value):
@@ -53,9 +54,13 @@ class ImageCandidate:
                 or valid_image_url(value.get("image_url")) is None
                 or (value.get("thumbnail_url") is not None and valid_image_url(value.get("thumbnail_url")) is None)
                 or value.get("role") not in {"cover", "gallery"} or type(value.get("position")) is not int
-                or not 0 <= value["position"] < MAX_IMAGES):
+                or not 0 <= value["position"] < MAX_IMAGES
+                or type(value.get("source_complete", False)) is not bool):
             raise ValueError("图片投影含无效链接或顺序。")
-        return cls(**{key: value[key] for key in cls.__dataclass_fields__})
+        # Historical projections did not prove that no source rows were skipped.
+        # They remain readable, but cannot retire images from a newer gallery.
+        return cls(**{key: value[key] for key in cls.__dataclass_fields__ if key != "source_complete"},
+                   source_complete=value.get("source_complete", False))
 
 
 def image_candidates(rows):
@@ -63,8 +68,10 @@ def image_candidates(rows):
     if not isinstance(rows, list):
         return ()
     images, keys = [], set()
+    complete = len(rows) <= MAX_IMAGES
     for row in rows[:MAX_IMAGES]:
         if not isinstance(row, dict) or not (url := first_url(row.get("url_list"))):
+            complete = False
             continue
         uri = row.get("uri")
         identity = "uri:" + uri if isinstance(uri, str) and 0 < len(uri) <= 2048 else "url:" + url
@@ -72,9 +79,12 @@ def image_candidates(rows):
         if key in keys:
             continue
         keys.add(key)
-        images.append(ImageCandidate(key, url, first_url(row.get("thumb_url_list")),
-                                     "cover" if not images else "gallery", len(images)))
-    return tuple(images)
+        images.append((key, url, first_url(row.get("thumb_url_list"))))
+    # Decide completeness after inspecting the bounded source, so an invalid
+    # later row also protects images parsed before it from deleting old entries.
+    return tuple(ImageCandidate(key, url, thumbnail, "cover" if position == 0 else "gallery",
+                                position, source_complete=complete)
+                 for position, (key, url, thumbnail) in enumerate(images))
 
 
 def detail_images(info):

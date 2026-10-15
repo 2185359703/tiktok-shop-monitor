@@ -89,15 +89,28 @@ def _load_image_product(session, product_id, payload, platform, region, *, lock=
     return product, shop
 
 
-def _current_image_exists(session, product_id):
-    return bool(session.scalar(select(exists().where(ProductImage.product_id == product_id,
-                                                     ProductImage.is_current.is_(True)))))
+def _current_image_exists(session, product_id, *, detail_only=False):
+    conditions = [ProductImage.product_id == product_id, ProductImage.is_current.is_(True)]
+    if detail_only:
+        conditions.append(ProductImage.source_kind == "detail")
+    return bool(session.scalar(select(exists().where(*conditions))))
 
 
 def image_capture_state(session, product_id: int, payload: dict, platform: str, region: str) -> bool:
     """Validate a durable task before HTTP; True permits a zero-request skip."""
     _load_image_product(session, product_id, payload, platform, region)
-    images = _current_image_exists(session, product_id)
+    # A listing cover is useful for display, but does not prove that the
+    # requested detail gallery has been collected.
+    images = _current_image_exists(session, product_id, detail_only=True)
+    if images:
+        latest = session.execute(select(CrawlTask.checkpoint["gallery_complete"].as_boolean()).where(
+            CrawlTask.platform == platform, CrawlTask.region == region,
+            CrawlTask.task_type == TaskType.PRODUCT_DETAIL, CrawlTask.resource_type == ResourceType.PRODUCT,
+            CrawlTask.resource_id == str(product_id), CrawlTask.status == TaskStatus.SUCCEEDED
+        ).order_by(CrawlTask.finished_at.desc(), CrawlTask.id.desc()).limit(1)).first()
+        # Legacy galleries have usable links, but no proof of completeness.
+        # Only a completed observation may skip a requested gallery capture.
+        images = latest is not None and latest[0] is True
     if payload.get("capture_mode") == MEDIA_MODE:
         return images and bool(session.scalar(select(exists().where(
             ProductContent.product_id == product_id, ProductContent.source_version == CONTENT_SOURCE_VERSION,
@@ -129,7 +142,9 @@ def persist_image_observation(session, task, snapshot) -> dict:
                                    source_kind="detail", observed_at=snapshot.captured_at)
     summary = {"capture_mode": task.payload["capture_mode"], "image_source_version": IMAGE_SOURCE_VERSION,
             "outcome": "available" if saved or _current_image_exists(session, product.id) else "no_images",
-            "images_upserted": saved, "observed_at": snapshot.captured_at.isoformat()}
+            "images_upserted": saved,
+            "gallery_complete": bool(detail.images) and all(image.source_complete for image in detail.images),
+            "observed_at": snapshot.captured_at.isoformat()}
     if task.payload["capture_mode"] == MEDIA_MODE:
         if detail.content is None:
             raise _failure("missing_content_projection")

@@ -86,7 +86,8 @@ def persist_product_detail(session, task, snapshot):
     return {"detail_updated": True, "stale_observation_skipped": False, "variants_seen": len(rows),
             "variants_upserted": len(rows), "new_variants": sum(value.platform_variant_id not in by_id for value in detail.variants),
             "attribute_conflicts": len(detail.raw_attributes["attribute_conflicts"]), "content_hash": content_hash,
-            "images_upserted": images_upserted, **content_summary}
+            "images_upserted": images_upserted,
+            "gallery_complete": bool(detail.images) and all(image.source_complete for image in detail.images), **content_summary}
 
 
 def ensure_initial_detail_task(session, product, shop):

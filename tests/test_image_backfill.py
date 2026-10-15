@@ -108,7 +108,10 @@ def test_capture_state_validates_identity_and_skips_existing_gallery(session):
     for field, value in (("shop_id", "999999"), ("platform_product_id", "1234"), ("image_source_version", "unknown")):
         with pytest.raises(TaskFailure):
             image_capture_state(session, product.id, {**payload, field: value}, "tiktok_shop", "US")
-    persist_product_detail(session, task, image_page())
+    page = image_page()
+    result = persist_product_detail(session, task, page)
+    task.status, task.checkpoint, task.finished_at = TaskStatus.SUCCEEDED, result, page.captured_at
+    session.flush()
     assert image_capture_state(session, product.id, payload, "tiktok_shop", "US")
 
 

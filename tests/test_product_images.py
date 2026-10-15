@@ -28,6 +28,38 @@ def test_gallery_keeps_order_deduplicates_mirrors_and_rejects_unsafe_urls():
     assert [image.position for image in images] == [0, 1]
     assert images[0].image_url == IMAGE and images[0].thumbnail_url == THUMB
     assert images[1].thumbnail_url is None
+    assert all(image.source_complete is False for image in images)
+
+
+def test_valid_duplicate_photo_uris_do_not_make_gallery_partial():
+    images = image_candidates(gallery())
+    assert len(images) == 2
+    assert all(image.source_complete is True for image in images)
+
+
+@pytest.mark.parametrize("invalid_row", [None, {}, {"url_list": "unexpected"},
+                                         {"uri": "missing-photo", "url_list": []},
+                                         {"uri": "bad-photo", "url_list": ["javascript:alert(1)"]}])
+def test_unparsed_source_rows_mark_even_earlier_photos_partial(invalid_row):
+    images = image_candidates([gallery()[0], invalid_row, gallery()[1]])
+    assert len(images) == 2 and images[0].image_url == IMAGE
+    assert all(image.source_complete is False for image in images)
+
+
+def test_source_row_limit_is_not_reported_as_complete_gallery():
+    rows = [{"uri": f"tos/public/photo-{index}", "url_list": [IMAGE.replace("photo", str(index))]}
+            for index in range(101)]
+    images = image_candidates(rows)
+    assert len(images) == 100
+    assert all(image.source_complete is False for image in images)
+
+
+@pytest.mark.parametrize("value", [None, "false", 0, 1])
+def test_projected_completeness_requires_a_boolean(value):
+    record = {"image_key": "a" * 64, "image_url": IMAGE, "thumbnail_url": None,
+              "role": "cover", "position": 0, "source_complete": value}
+    with pytest.raises(ValueError):
+        ImageCandidate.from_record(record)
 
 
 @pytest.mark.parametrize("value", [None, "", "//cdn.example/photo.jpg", "file:///x", "http://localhost/x",
@@ -69,6 +101,12 @@ def test_old_detail_evidence_restores_without_images_and_new_evidence_validates(
     old.pop("image_source_version")
     old["detail"].pop("images")
     assert DetailSnapshot.from_evidence(old).detail.images == ()
+    legacy = deepcopy(record)
+    for image in legacy["detail"]["images"]:
+        image.pop("source_complete")
+    legacy_images = DetailSnapshot.from_evidence(legacy).detail.images
+    assert [image.image_key for image in legacy_images] == [image.image_key for image in page.detail.images]
+    assert all(image.source_complete is False for image in legacy_images)
     record["detail"]["images"][0]["image_url"] = "javascript:alert(1)"
     with pytest.raises(ValueError):
         DetailSnapshot.from_evidence(record)

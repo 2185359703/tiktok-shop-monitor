@@ -1,15 +1,17 @@
 from contextlib import nullcontext
 from dataclasses import replace
 from threading import Event
+from uuid import uuid4
 
 import pytest
 from sqlalchemy import func, select
 
 from app.crawlers.product_images import IMAGE_SOURCE_VERSION
-from app.models import ProductContent, ProductImage, ProductSnapshot, ProductVariant, TaskStatus
+from app.models import CrawlTask, ProductContent, ProductImage, ProductSnapshot, ProductVariant, TaskStatus
 from app.queue.retry_policy import TaskFailure
 from app.services.product_detail import ensure_initial_detail_task, persist_product_detail
 from app.services.image_backfill import MEDIA_MODE, image_task_key, media_task_key
+from app.services.product_images import persist_product_images
 from app.crawlers.product_content import CONTENT_SOURCE_VERSION
 from app.services.task_runtime import claim_task, finalize_task
 from app.workers.contracts import HandlerContext
@@ -48,7 +50,13 @@ def test_image_handler_commits_only_gallery_even_when_baselines_are_enabled(sess
 
 def test_image_handler_skips_an_already_available_gallery_without_http(session, monkeypatch, tmp_path):
     product, task = initial(session)
-    persist_product_detail(session, task, image_page())
+    page = image_page()
+    result = persist_product_detail(session, task, page)
+    # The completed original detail provides durable completeness evidence.
+    session.add(CrawlTask(task_id=str(uuid4()), platform=task.platform, region=task.region,
+        task_type=task.task_type, resource_type=task.resource_type, resource_id=task.resource_id,
+        payload=dict(task.payload), status=TaskStatus.SUCCEEDED, checkpoint=result, finished_at=page.captured_at))
+    session.flush()
     set_image_mode(task)
     config = replace(CONFIG, evidence_directory=tmp_path)
     def unexpected(*args): raise AssertionError("A current gallery must skip HTTP")
@@ -58,6 +66,40 @@ def test_image_handler_skips_an_already_available_gallery_without_http(session, 
         session_factory=lambda: nullcontext(session)))
     assert finalize_task(session, lease, config, result=result) == TaskStatus.SUCCEEDED
     assert task.checkpoint["outcome"] == "skipped_already_available"
+
+
+def test_listing_cover_does_not_skip_gallery_capture(session, monkeypatch, tmp_path):
+    product, task = initial(session)
+    page = image_page()
+    persist_product_images(session, product.id, page.detail.images[:1], source_url=page.final_url,
+                           source_kind="listing", observed_at=page.captured_at)
+    set_image_mode(task)
+    calls = []
+    def fetch(*args):
+        calls.append(1)
+        return page
+    monkeypatch.setattr("app.workers.handlers.TikTokShopAdapter.fetch_product_detail", fetch)
+    config = replace(CONFIG, evidence_directory=tmp_path)
+    lease = claim_task(session, task.task_id, task.task_type, "cover-to-gallery-test", config)
+    result = ProductDetailHandler().prepare(lease, HandlerContext(config, None, Event(),
+        session_factory=lambda: nullcontext(session)))
+    assert finalize_task(session, lease, config, result=result) == TaskStatus.SUCCEEDED
+    assert calls == [1] and task.checkpoint["gallery_complete"]
+    assert session.scalar(select(func.count()).select_from(ProductImage).where(ProductImage.source_kind == "detail")) == 2
+
+
+def test_partial_gallery_evidence_cannot_be_used_to_skip_a_later_capture(session, tmp_path):
+    from app.services.image_backfill import image_capture_state, persist_image_observation
+    product, task = initial(session)
+    set_image_mode(task)
+    page = image_page()
+    partial = replace(page, detail=replace(page.detail,
+        images=tuple(replace(image, source_complete=False) for image in page.detail.images)))
+    saved = persist_image_observation(session, task, partial)
+    assert not saved["gallery_complete"]
+    task.status, task.checkpoint, task.finished_at = TaskStatus.SUCCEEDED, saved, page.captured_at
+    session.flush()
+    assert not image_capture_state(session, product.id, task.payload, task.platform, task.region)
 
 
 def test_unknown_capture_mode_never_runs_full_detail_as_a_fallback(session, monkeypatch):
