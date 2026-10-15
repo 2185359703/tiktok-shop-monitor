@@ -1,0 +1,346 @@
+-- Generated from app.models by python -m app.storage.schema --print-sql
+
+-- Requires MySQL >= 8.0.16. All datetime values use UTC.
+
+CREATE DATABASE IF NOT EXISTS tiktok_shop_monitor CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci;
+
+USE tiktok_shop_monitor;
+
+SET time_zone = '+00:00';
+
+SET SESSION sql_mode = 'STRICT_TRANS_TABLES,NO_ZERO_IN_DATE,NO_ZERO_DATE,ERROR_FOR_DIVISION_BY_ZERO,NO_ENGINE_SUBSTITUTION';
+
+CREATE TABLE IF NOT EXISTS crawl_tasks (
+	task_id CHAR(36) CHARACTER SET ascii COLLATE ascii_bin NOT NULL COMMENT '任务业务UUID，与数据库内部主键id不同', 
+	idempotency_key CHAR(64) CHARACTER SET ascii COLLATE ascii_bin COMMENT '任务类型、资源、窗口与上下文的SHA-256幂等键', 
+	task_type VARCHAR(32) NOT NULL COMMENT '任务类型：shop_discovery=店铺发现，product_discovery=商品发现，product_detail=详情，product_snapshot=快照，change_detection=变化检测，report_generation=报表', 
+	resource_type VARCHAR(32) NOT NULL COMMENT '资源类型：seed=种子，shop=店铺，product=商品，variant=SKU，report=报表', 
+	resource_id VARCHAR(128) COLLATE utf8mb4_bin NOT NULL COMMENT '任务资源标识；同一资源类型使用统一的ID体系', 
+	payload JSON NOT NULL COMMENT '任务业务参数JSON；不得保存密码或会话凭据', 
+	checkpoint JSON COMMENT '持久化分页游标或执行进度，用于断点恢复', 
+	priority INTEGER NOT NULL COMMENT '调度优先级，0-9；值越大优先级越高' DEFAULT '0', 
+	status VARCHAR(32) NOT NULL COMMENT '任务状态：pending=待执行，running=执行中，retry_waiting=待重试，succeeded=成功，abandoned=租约失效，dead=失败耗尽，cancelled=取消' DEFAULT 'pending', 
+	attempt_count INTEGER NOT NULL COMMENT '已开始的执行尝试次数，含首次执行' DEFAULT '0', 
+	max_attempts INTEGER NOT NULL COMMENT '最大总尝试次数，含首次执行；默认3' DEFAULT '3', 
+	scheduled_for DATETIME(6) NOT NULL COMMENT '原始逻辑调度窗口时间（UTC），重试时保留' DEFAULT CURRENT_TIMESTAMP(6), 
+	available_at DATETIME(6) NOT NULL COMMENT '允许开始或再次执行的最早时间（UTC）' DEFAULT CURRENT_TIMESTAMP(6), 
+	started_at DATETIME(6) COMMENT '最近一次执行开始时间（UTC）', 
+	finished_at DATETIME(6) COMMENT '任务最终结束时间（UTC）', 
+	lease_expires_at DATETIME(6) COMMENT '当前Worker租约到期时间（UTC）', 
+	lease_token CHAR(36) CHARACTER SET ascii COLLATE ascii_bin COMMENT '本次执行租约UUID，防止过期Worker覆盖新执行结果', 
+	worker_id VARCHAR(128) COMMENT '最近执行该任务的Worker实例标识', 
+	last_error TEXT COMMENT '最近一次执行错误的脱敏描述', 
+	id BIGINT UNSIGNED NOT NULL COMMENT '数据库内部自增主键' AUTO_INCREMENT, 
+	platform VARCHAR(32) COLLATE utf8mb4_bin NOT NULL COMMENT '数据来源平台，默认 tiktok_shop' DEFAULT 'tiktok_shop', 
+	region VARCHAR(2) COLLATE utf8mb4_bin NOT NULL COMMENT '市场区域代码，例如 US；统一使用大写', 
+	updated_at DATETIME(6) NOT NULL COMMENT '记录最后修改时间（UTC，数据库自动更新）' DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6), 
+	created_at DATETIME(6) NOT NULL COMMENT '记录创建时间（UTC，微秒精度）' DEFAULT CURRENT_TIMESTAMP(6), 
+	CONSTRAINT pk_crawl_tasks PRIMARY KEY (id), 
+	CONSTRAINT uq_crawl_tasks_task_id UNIQUE (task_id), 
+	CONSTRAINT uq_crawl_tasks_idempotency UNIQUE (idempotency_key), 
+	CONSTRAINT ck_crawl_tasks_priority CHECK (priority >= 0 AND priority <= 9), 
+	CONSTRAINT ck_crawl_tasks_attempt_count CHECK (attempt_count >= 0), 
+	CONSTRAINT ck_crawl_tasks_max_attempts CHECK (max_attempts >= 1), 
+	CONSTRAINT ck_crawl_tasks_task_type CHECK (task_type IN ('shop_discovery', 'product_discovery', 'product_detail', 'product_snapshot', 'change_detection', 'report_generation')), 
+	CONSTRAINT ck_crawl_tasks_resource_type CHECK (resource_type IN ('seed', 'shop', 'product', 'variant', 'report')), 
+	CONSTRAINT ck_crawl_tasks_status CHECK (status IN ('pending', 'running', 'retry_waiting', 'succeeded', 'abandoned', 'dead', 'cancelled'))
+) ENGINE=InnoDB CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='采集任务调度状态、重试、检查点与Worker租约';
+
+CREATE INDEX ix_crawl_tasks_dispatch ON crawl_tasks (status, available_at, priority);
+
+CREATE INDEX ix_crawl_tasks_lease ON crawl_tasks (status, lease_expires_at);
+
+CREATE INDEX ix_crawl_tasks_resource ON crawl_tasks (platform, region, resource_type, resource_id);
+
+CREATE TABLE IF NOT EXISTS seed_shop_observations (
+	category VARCHAR(64) NOT NULL COMMENT '观察到店铺的服装类目代码', 
+	seed_type VARCHAR(32) NOT NULL COMMENT '种子类型：shop_name=店名，shop_url=店铺链接，shop_id=平台店铺ID' DEFAULT 'shop_name', 
+	seed_value VARCHAR(255) NOT NULL COMMENT '原始种子值；店名不作为正式店铺唯一身份', 
+	shop_url TEXT COMMENT '原始观察中的店铺链接；尚未解析时为空', 
+	source_url TEXT NOT NULL COMMENT '种子来源的公开类目页或发现入口', 
+	verification_status VARCHAR(64) NOT NULL COMMENT '原始观察的验证依据，例如已在公开类目页观察到' DEFAULT 'observed_public_category_page', 
+	observed_at DATE NOT NULL COMMENT '原始观察日期', 
+	row_hash CHAR(64) CHARACTER SET ascii COLLATE ascii_bin NOT NULL COMMENT '原始种子行的SHA-256摘要，用于幂等导入', 
+	raw_record JSON COMMENT '原始CSV行的JSON内容，默认延迟加载', 
+	resolution_status VARCHAR(32) NOT NULL COMMENT '解析状态：pending=待解析，resolved=已确认，ambiguous=多候选，not_found=未找到，failed=失败' DEFAULT 'pending', 
+	resolution_error TEXT COMMENT '最近一次店铺身份解析失败原因', 
+	id BIGINT UNSIGNED NOT NULL COMMENT '数据库内部自增主键' AUTO_INCREMENT, 
+	platform VARCHAR(32) COLLATE utf8mb4_bin NOT NULL COMMENT '数据来源平台，默认 tiktok_shop' DEFAULT 'tiktok_shop', 
+	region VARCHAR(2) COLLATE utf8mb4_bin NOT NULL COMMENT '市场区域代码，例如 US；统一使用大写', 
+	updated_at DATETIME(6) NOT NULL COMMENT '记录最后修改时间（UTC，数据库自动更新）' DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6), 
+	created_at DATETIME(6) NOT NULL COMMENT '记录创建时间（UTC，微秒精度）' DEFAULT CURRENT_TIMESTAMP(6), 
+	CONSTRAINT pk_seed_shop_observations PRIMARY KEY (id), 
+	CONSTRAINT uq_seed_observations_row_hash UNIQUE (row_hash), 
+	CONSTRAINT uq_seed_observations_scope UNIQUE (id, platform, region), 
+	CONSTRAINT ck_seed_shop_observations_seed_type CHECK (seed_type IN ('shop_name', 'shop_url', 'shop_id')), 
+	CONSTRAINT ck_seed_shop_observations_resolution_status CHECK (resolution_status IN ('pending', 'resolved', 'ambiguous', 'not_found', 'failed'))
+) ENGINE=InnoDB CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='店铺种子原始观察与身份解析状态';
+
+CREATE INDEX ix_seed_resolution ON seed_shop_observations (region, resolution_status, category);
+
+CREATE TABLE IF NOT EXISTS shops (
+	platform_shop_id VARCHAR(128) COLLATE utf8mb4_bin NOT NULL COMMENT '平台稳定店铺ID，按字符串保留前导零和大小写', 
+	canonical_name VARCHAR(255) NOT NULL COMMENT '当前店铺名称；允许改名和不同店铺同名', 
+	canonical_url TEXT COMMENT '标准化的店铺公开入口链接', 
+	discovery_category VARCHAR(64) COMMENT '初次发现来源类目，不代表全部主营类目', 
+	currency VARCHAR(3) NOT NULL COMMENT '店铺价格币种，美国站默认 USD' DEFAULT 'USD', 
+	rating NUMERIC(3, 2) COMMENT '公开店铺评分，范围 0-5；不可见时为空', 
+	follower_count BIGINT UNSIGNED COMMENT '公开店铺关注数；未获取时为空', 
+	product_count BIGINT UNSIGNED COMMENT '平台展示的店铺商品数，区别于本系统已采集数量', 
+	status VARCHAR(32) NOT NULL COMMENT '店铺状态：unknown=未知，active=有效，inactive=失效' DEFAULT 'unknown', 
+	first_seen_at DATETIME(6) NOT NULL COMMENT '首次发现店铺的时间（UTC）' DEFAULT CURRENT_TIMESTAMP(6), 
+	last_seen_at DATETIME(6) NOT NULL COMMENT '最近成功观察到店铺的时间（UTC，业务更新）' DEFAULT CURRENT_TIMESTAMP(6), 
+	id BIGINT UNSIGNED NOT NULL COMMENT '数据库内部自增主键' AUTO_INCREMENT, 
+	platform VARCHAR(32) COLLATE utf8mb4_bin NOT NULL COMMENT '数据来源平台，默认 tiktok_shop' DEFAULT 'tiktok_shop', 
+	region VARCHAR(2) COLLATE utf8mb4_bin NOT NULL COMMENT '市场区域代码，例如 US；统一使用大写', 
+	updated_at DATETIME(6) NOT NULL COMMENT '记录最后修改时间（UTC，数据库自动更新）' DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6), 
+	created_at DATETIME(6) NOT NULL COMMENT '记录创建时间（UTC，微秒精度）' DEFAULT CURRENT_TIMESTAMP(6), 
+	CONSTRAINT pk_shops PRIMARY KEY (id), 
+	CONSTRAINT uq_shops_identity UNIQUE (platform, region, platform_shop_id), 
+	CONSTRAINT uq_shops_scope UNIQUE (id, platform, region), 
+	CONSTRAINT ck_shops_rating CHECK (rating IS NULL OR (rating >= 0 AND rating <= 5)), 
+	CONSTRAINT ck_shops_status CHECK (status IN ('unknown', 'active', 'inactive'))
+) ENGINE=InnoDB CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='已确认平台身份的正式店铺与当前指标';
+
+CREATE INDEX ix_shops_market_status ON shops (region, status, discovery_category);
+
+CREATE TABLE IF NOT EXISTS crawl_attempts (
+	task_id BIGINT UNSIGNED NOT NULL COMMENT '任务内部主键，关联 crawl_tasks.id；不是任务业务UUID', 
+	attempt_no INTEGER NOT NULL COMMENT '该任务的尝试序号，从1开始', 
+	worker_id VARCHAR(128) COMMENT '执行该次尝试的Worker实例标识', 
+	request_url TEXT COMMENT '脱敏后的请求URL，去除凭据与敏感签名', 
+	request_method VARCHAR(16) NOT NULL COMMENT 'HTTP请求方法，默认 GET' DEFAULT 'GET', 
+	response_status INTEGER COMMENT 'HTTP响应状态码，100-599；无响应时为空', 
+	response_bytes BIGINT UNSIGNED COMMENT '响应正文大小，单位字节', 
+	latency_ms INTEGER COMMENT '请求或执行耗时，单位毫秒', 
+	succeeded BOOL COMMENT '该次业务处理是否成功：1=成功，0=失败，空=未完成', 
+	error_type VARCHAR(64) COMMENT '可分类错误类型，例如超时、限流、解析失败', 
+	error_message TEXT COMMENT '该次执行错误的脱敏描述', 
+	evidence_path TEXT COMMENT '脱敏响应或排查证据文件路径', 
+	response_hash CHAR(64) CHARACTER SET ascii COLLATE ascii_bin COMMENT '响应正文的SHA-256摘要', 
+	started_at DATETIME(6) NOT NULL COMMENT '本次执行尝试开始时间（UTC）' DEFAULT CURRENT_TIMESTAMP(6), 
+	finished_at DATETIME(6) COMMENT '本次执行尝试结束时间（UTC）', 
+	id BIGINT UNSIGNED NOT NULL COMMENT '数据库内部自增主键' AUTO_INCREMENT, 
+	created_at DATETIME(6) NOT NULL COMMENT '记录创建时间（UTC，微秒精度）' DEFAULT CURRENT_TIMESTAMP(6), 
+	CONSTRAINT pk_crawl_attempts PRIMARY KEY (id), 
+	CONSTRAINT uq_crawl_attempts_number UNIQUE (task_id, attempt_no), 
+	CONSTRAINT ck_crawl_attempts_attempt_no CHECK (attempt_no >= 1), 
+	CONSTRAINT ck_crawl_attempts_response_status CHECK (response_status IS NULL OR (response_status >= 100 AND response_status <= 599)), 
+	CONSTRAINT ck_crawl_attempts_latency_ms CHECK (latency_ms IS NULL OR latency_ms >= 0), 
+	CONSTRAINT fk_crawl_attempts_task_id_crawl_tasks FOREIGN KEY(task_id) REFERENCES crawl_tasks (id) ON DELETE RESTRICT
+) ENGINE=InnoDB CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='采集任务每次执行尝试的请求结果与失败证据';
+
+CREATE INDEX ix_crawl_attempts_finished ON crawl_attempts (finished_at, error_type);
+
+CREATE TABLE IF NOT EXISTS products (
+	platform_product_id VARCHAR(128) COLLATE utf8mb4_bin NOT NULL COMMENT '平台稳定商品ID，按字符串保存', 
+	shop_id BIGINT UNSIGNED NOT NULL COMMENT '所属店铺内部主键，关联 shops.id', 
+	product_url TEXT NOT NULL COMMENT '商品公开详情入口链接', 
+	title VARCHAR(512) COMMENT '商品标题；发现阶段可暂缺，详情解析应校验', 
+	description TEXT COMMENT '商品原始描述，默认延迟加载', 
+	original_category TEXT COMMENT '平台原始类目路径', 
+	normalized_category VARCHAR(64) COMMENT '清洗后的服装标准类目代码', 
+	category_rule_version VARCHAR(32) COMMENT '类目清洗规则版本', 
+	brand VARCHAR(255) COMMENT '公开商品品牌', 
+	gender VARCHAR(32) COMMENT '适用性别或人群标签', 
+	season VARCHAR(64) COMMENT '适用季节标签', 
+	style VARCHAR(128) COMMENT '服装风格标签，例如休闲、运动', 
+	fit VARCHAR(64) COMMENT '服装版型，例如修身、宽松', 
+	garment_length VARCHAR(64) COMMENT '衣长、裤长或裙长属性', 
+	material TEXT COMMENT '面料与材质描述', 
+	pattern VARCHAR(128) COMMENT '图案或纹理标签', 
+	color_summary JSON COMMENT '商品可见颜色标签数组', 
+	size_summary JSON COMMENT '商品可见尺码标签数组，保留原始体系', 
+	raw_attributes JSON COMMENT '原始服装属性JSON，便于复核清洗结果', 
+	stock_status VARCHAR(32) NOT NULL COMMENT '库存状态：unknown=未知，in_stock=有货，out_of_stock=缺货，partial=部分规格有货' DEFAULT 'unknown', 
+	availability_status VARCHAR(32) NOT NULL COMMENT '可用状态：unknown=未知，available=可访问，unavailable=暂不可用，removed=确认下架' DEFAULT 'unknown', 
+	sales_count BIGINT UNSIGNED COMMENT '可确认的精确公开销量；缺失或仅有区间时为空', 
+	sales_count_text VARCHAR(128) COMMENT '公开销量原始文案，例如 1K+ sold', 
+	rating NUMERIC(3, 2) COMMENT '公开商品评分，范围 0-5；未获取时为空', 
+	review_count BIGINT UNSIGNED COMMENT '公开评价数量；未获取时为空', 
+	first_seen_at DATETIME(6) NOT NULL COMMENT '首次发现商品的时间（UTC）' DEFAULT CURRENT_TIMESTAMP(6), 
+	last_seen_at DATETIME(6) NOT NULL COMMENT '最近成功观察到商品的时间（UTC，业务更新）' DEFAULT CURRENT_TIMESTAMP(6), 
+	last_success_at DATETIME(6) COMMENT '最近有效详情采集完成时间（UTC）', 
+	next_capture_at DATETIME(6) COMMENT '下一次计划采集时间（UTC）', 
+	content_hash CHAR(64) CHARACTER SET ascii COLLATE ascii_bin COMMENT '稳定业务内容SHA-256摘要，排除采集时间与随机字段', 
+	parser_version VARCHAR(32) COMMENT '当前商品详情解析器版本', 
+	data_version INTEGER NOT NULL COMMENT '业务数据版本，默认1；内容变更时由服务层增加' DEFAULT '1', 
+	id BIGINT UNSIGNED NOT NULL COMMENT '数据库内部自增主键' AUTO_INCREMENT, 
+	platform VARCHAR(32) COLLATE utf8mb4_bin NOT NULL COMMENT '数据来源平台，默认 tiktok_shop' DEFAULT 'tiktok_shop', 
+	region VARCHAR(2) COLLATE utf8mb4_bin NOT NULL COMMENT '市场区域代码，例如 US；统一使用大写', 
+	currency VARCHAR(3) NOT NULL COMMENT '价格币种代码，美国站默认 USD' DEFAULT 'USD', 
+	pricing_context VARCHAR(64) NOT NULL COMMENT '价格观察上下文，public_listed 表示公开标价' DEFAULT 'public_listed', 
+	price_text VARCHAR(255) COMMENT '页面原始价格文案，保留范围与展示格式', 
+	price_min NUMERIC(12, 2) COMMENT '商品当前价格下限；未获取时为空', 
+	price_max NUMERIC(12, 2) COMMENT '商品当前价格上限；单价商品与下限相同', 
+	original_price_min NUMERIC(12, 2) COMMENT '页面展示的原价下限；未展示时为空', 
+	original_price_max NUMERIC(12, 2) COMMENT '页面展示的原价上限；未展示时为空', 
+	discount_rate NUMERIC(7, 4) COMMENT '已确认的优惠比例，范围 0-1；0.2 表示优惠两成', 
+	updated_at DATETIME(6) NOT NULL COMMENT '记录最后修改时间（UTC，数据库自动更新）' DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6), 
+	created_at DATETIME(6) NOT NULL COMMENT '记录创建时间（UTC，微秒精度）' DEFAULT CURRENT_TIMESTAMP(6), 
+	CONSTRAINT pk_products PRIMARY KEY (id), 
+	CONSTRAINT uq_products_identity UNIQUE (platform, region, platform_product_id), 
+	CONSTRAINT fk_products_shop_scope FOREIGN KEY(shop_id, platform, region) REFERENCES shops (id, platform, region) ON DELETE RESTRICT, 
+	CONSTRAINT ck_products_price_min CHECK (price_min IS NULL OR price_min >= 0), 
+	CONSTRAINT ck_products_price_max CHECK (price_max IS NULL OR price_max >= 0), 
+	CONSTRAINT ck_products_price_range CHECK (price_min <= price_max), 
+	CONSTRAINT ck_products_original_min CHECK (original_price_min IS NULL OR original_price_min >= 0), 
+	CONSTRAINT ck_products_original_max CHECK (original_price_max IS NULL OR original_price_max >= 0), 
+	CONSTRAINT ck_products_original_range CHECK (original_price_min <= original_price_max), 
+	CONSTRAINT ck_products_discount_rate CHECK (discount_rate IS NULL OR (discount_rate >= 0 AND discount_rate <= 1)), 
+	CONSTRAINT ck_products_data_version CHECK (data_version >= 1), 
+	CONSTRAINT ck_products_rating CHECK (rating IS NULL OR (rating >= 0 AND rating <= 5)), 
+	CONSTRAINT ck_products_stock_status CHECK (stock_status IN ('unknown', 'in_stock', 'out_of_stock', 'partial')), 
+	CONSTRAINT ck_products_availability_status CHECK (availability_status IN ('unknown', 'available', 'unavailable', 'removed'))
+) ENGINE=InnoDB CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='商品当前详情、服装属性、价格区间与采集状态';
+
+CREATE INDEX ix_products_category_price ON products (region, normalized_category, price_min);
+
+CREATE INDEX ix_products_next_capture ON products (availability_status, next_capture_at);
+
+CREATE INDEX ix_products_shop_status ON products (shop_id, availability_status);
+
+CREATE TABLE IF NOT EXISTS shop_seed_links (
+	seed_id BIGINT UNSIGNED NOT NULL COMMENT '种子观察内部主键，关联 seed_shop_observations.id', 
+	shop_id BIGINT UNSIGNED NOT NULL COMMENT '正式店铺内部主键，关联 shops.id', 
+	resolved_at DATETIME(6) NOT NULL COMMENT '店铺身份确认时间（UTC）', 
+	resolution_method VARCHAR(64) NOT NULL COMMENT '身份确认方式，例如 source_id 或 manual', 
+	evidence_url TEXT COMMENT '用于确认店铺身份的公开证据链接', 
+	id BIGINT UNSIGNED NOT NULL COMMENT '数据库内部自增主键' AUTO_INCREMENT, 
+	platform VARCHAR(32) COLLATE utf8mb4_bin NOT NULL COMMENT '数据来源平台，默认 tiktok_shop' DEFAULT 'tiktok_shop', 
+	region VARCHAR(2) COLLATE utf8mb4_bin NOT NULL COMMENT '市场区域代码，例如 US；统一使用大写', 
+	updated_at DATETIME(6) NOT NULL COMMENT '记录最后修改时间（UTC，数据库自动更新）' DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6), 
+	created_at DATETIME(6) NOT NULL COMMENT '记录创建时间（UTC，微秒精度）' DEFAULT CURRENT_TIMESTAMP(6), 
+	CONSTRAINT pk_shop_seed_links PRIMARY KEY (id), 
+	CONSTRAINT uq_shop_seed_links_seed UNIQUE (seed_id), 
+	CONSTRAINT fk_shop_seed_links_seed FOREIGN KEY(seed_id, platform, region) REFERENCES seed_shop_observations (id, platform, region) ON DELETE RESTRICT, 
+	CONSTRAINT fk_shop_seed_links_shop FOREIGN KEY(shop_id, platform, region) REFERENCES shops (id, platform, region) ON DELETE RESTRICT
+) ENGINE=InnoDB CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='种子观察与正式店铺的确认映射';
+
+CREATE INDEX ix_shop_seed_links_shop ON shop_seed_links (shop_id, platform, region);
+
+CREATE TABLE IF NOT EXISTS product_snapshots (
+	product_id BIGINT UNSIGNED NOT NULL COMMENT '快照所属商品内部主键，关联 products.id', 
+	task_id BIGINT UNSIGNED COMMENT '采集任务内部主键，关联 crawl_tasks.id；手动采集可空', 
+	scheduled_for DATETIME(6) NOT NULL COMMENT '逻辑采集窗口时间（UTC）；同一任务重试保持不变', 
+	captured_at DATETIME(6) NOT NULL COMMENT '本次实际观察时间（UTC）', 
+	stock_status VARCHAR(32) NOT NULL COMMENT '本次库存：unknown=未知，in_stock=有货，out_of_stock=缺货，partial=部分规格有货' DEFAULT 'unknown', 
+	availability_status VARCHAR(32) NOT NULL COMMENT '本次可用状态：unknown=未知，available=可访问，unavailable=暂不可用，removed=确认下架' DEFAULT 'unknown', 
+	sales_count BIGINT UNSIGNED COMMENT '本次可确认的精确公开销量；未获取时为空', 
+	sales_count_text VARCHAR(128) COMMENT '本次公开销量的原始展示文案', 
+	rating NUMERIC(3, 2) COMMENT '本次公开商品评分，范围 0-5；未获取时为空', 
+	review_count BIGINT UNSIGNED COMMENT '本次公开评价数量；未获取时为空', 
+	variant_count INTEGER COMMENT '本次成功解析的SKU规格数量', 
+	content_hash CHAR(64) CHARACTER SET ascii COLLATE ascii_bin COMMENT '本次稳定商品内容的SHA-256摘要', 
+	parser_version VARCHAR(32) NOT NULL COMMENT '生成该快照的解析器版本', 
+	source_status INTEGER COMMENT '来源响应HTTP状态码；业务有效性另行校验', 
+	source_url TEXT COMMENT '本次快照数据的公开来源链接', 
+	raw_payload JSON COMMENT '脱敏后的来源JSON，便于复现与解析排查；默认延迟加载', 
+	id BIGINT UNSIGNED NOT NULL COMMENT '数据库内部自增主键' AUTO_INCREMENT, 
+	currency VARCHAR(3) NOT NULL COMMENT '价格币种代码，美国站默认 USD' DEFAULT 'USD', 
+	pricing_context VARCHAR(64) NOT NULL COMMENT '价格观察上下文，public_listed 表示公开标价' DEFAULT 'public_listed', 
+	price_text VARCHAR(255) COMMENT '页面原始价格文案，保留范围与展示格式', 
+	price_min NUMERIC(12, 2) COMMENT '商品当前价格下限；未获取时为空', 
+	price_max NUMERIC(12, 2) COMMENT '商品当前价格上限；单价商品与下限相同', 
+	original_price_min NUMERIC(12, 2) COMMENT '页面展示的原价下限；未展示时为空', 
+	original_price_max NUMERIC(12, 2) COMMENT '页面展示的原价上限；未展示时为空', 
+	discount_rate NUMERIC(7, 4) COMMENT '已确认的优惠比例，范围 0-1；0.2 表示优惠两成', 
+	created_at DATETIME(6) NOT NULL COMMENT '记录创建时间（UTC，微秒精度）' DEFAULT CURRENT_TIMESTAMP(6), 
+	CONSTRAINT pk_product_snapshots PRIMARY KEY (id), 
+	CONSTRAINT uq_product_snapshots_window UNIQUE (product_id, scheduled_for, pricing_context), 
+	CONSTRAINT uq_product_snapshots_scope UNIQUE (id, product_id), 
+	CONSTRAINT ck_product_snapshots_price_min CHECK (price_min IS NULL OR price_min >= 0), 
+	CONSTRAINT ck_product_snapshots_price_max CHECK (price_max IS NULL OR price_max >= 0), 
+	CONSTRAINT ck_product_snapshots_price_range CHECK (price_min <= price_max), 
+	CONSTRAINT ck_product_snapshots_original_min CHECK (original_price_min IS NULL OR original_price_min >= 0), 
+	CONSTRAINT ck_product_snapshots_original_max CHECK (original_price_max IS NULL OR original_price_max >= 0), 
+	CONSTRAINT ck_product_snapshots_original_range CHECK (original_price_min <= original_price_max), 
+	CONSTRAINT ck_product_snapshots_discount_rate CHECK (discount_rate IS NULL OR (discount_rate >= 0 AND discount_rate <= 1)), 
+	CONSTRAINT ck_product_snapshots_rating CHECK (rating IS NULL OR (rating >= 0 AND rating <= 5)), 
+	CONSTRAINT ck_product_snapshots_source_status CHECK (source_status IS NULL OR (source_status >= 100 AND source_status <= 599)), 
+	CONSTRAINT ck_product_snapshots_variant_count CHECK (variant_count IS NULL OR variant_count >= 0), 
+	CONSTRAINT ck_product_snapshots_stock_status CHECK (stock_status IN ('unknown', 'in_stock', 'out_of_stock', 'partial')), 
+	CONSTRAINT ck_product_snapshots_availability_status CHECK (availability_status IN ('unknown', 'available', 'unavailable', 'removed')), 
+	CONSTRAINT fk_product_snapshots_product_id_products FOREIGN KEY(product_id) REFERENCES products (id) ON DELETE RESTRICT, 
+	CONSTRAINT fk_product_snapshots_task_id_crawl_tasks FOREIGN KEY(task_id) REFERENCES crawl_tasks (id) ON DELETE RESTRICT
+) ENGINE=InnoDB CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='按逻辑采集窗口保存的商品价格与指标历史快照';
+
+CREATE INDEX ix_product_snapshots_captured ON product_snapshots (captured_at);
+
+CREATE INDEX ix_product_snapshots_history ON product_snapshots (product_id, captured_at);
+
+CREATE TABLE IF NOT EXISTS product_variants (
+	product_id BIGINT UNSIGNED NOT NULL COMMENT '所属商品内部主键，关联 products.id', 
+	variant_key CHAR(64) CHARACTER SET ascii COLLATE ascii_bin NOT NULL COMMENT '规格身份SHA-256键，由平台SKU ID或稳定规格组合生成', 
+	platform_variant_id VARCHAR(128) COLLATE utf8mb4_bin COMMENT '平台原始SKU ID；未提供时为空', 
+	color VARCHAR(128) COMMENT '该SKU的颜色标签', 
+	size VARCHAR(64) COMMENT '该SKU的尺码标签，保留原始体系', 
+	material VARCHAR(255) COMMENT '该SKU的面料或材质', 
+	options JSON COMMENT '完整规格键值组合JSON', 
+	currency VARCHAR(3) NOT NULL COMMENT 'SKU价格币种，美国站默认 USD' DEFAULT 'USD', 
+	price NUMERIC(12, 2) COMMENT '该SKU的当前明确单价；未获取时为空', 
+	original_price NUMERIC(12, 2) COMMENT '该SKU页面展示的原价；未展示时为空', 
+	stock_status VARCHAR(32) NOT NULL COMMENT 'SKU库存：unknown=未知，in_stock=有货，out_of_stock=缺货，partial=部分可用' DEFAULT 'unknown', 
+	available_quantity BIGINT UNSIGNED COMMENT '平台可见可售数量；未公开时为空', 
+	variant_payload_hash CHAR(64) CHARACTER SET ascii COLLATE ascii_bin COMMENT '稳定SKU内容的SHA-256摘要', 
+	id BIGINT UNSIGNED NOT NULL COMMENT '数据库内部自增主键' AUTO_INCREMENT, 
+	updated_at DATETIME(6) NOT NULL COMMENT '记录最后修改时间（UTC，数据库自动更新）' DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6), 
+	created_at DATETIME(6) NOT NULL COMMENT '记录创建时间（UTC，微秒精度）' DEFAULT CURRENT_TIMESTAMP(6), 
+	CONSTRAINT pk_product_variants PRIMARY KEY (id), 
+	CONSTRAINT uq_variants_identity UNIQUE (product_id, variant_key), 
+	CONSTRAINT uq_variants_platform_id UNIQUE (product_id, platform_variant_id), 
+	CONSTRAINT uq_variants_product_scope UNIQUE (id, product_id), 
+	CONSTRAINT ck_product_variants_price CHECK (price IS NULL OR price >= 0), 
+	CONSTRAINT ck_product_variants_original_price CHECK (original_price IS NULL OR original_price >= 0), 
+	CONSTRAINT ck_product_variants_stock_status CHECK (stock_status IN ('unknown', 'in_stock', 'out_of_stock', 'partial')), 
+	CONSTRAINT fk_product_variants_product_id_products FOREIGN KEY(product_id) REFERENCES products (id) ON DELETE RESTRICT
+) ENGINE=InnoDB CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='商品颜色、尺码等SKU规格的当前价格与库存';
+
+CREATE TABLE IF NOT EXISTS change_events (
+	product_id BIGINT UNSIGNED NOT NULL COMMENT '发生变化的商品内部主键，关联 products.id', 
+	variant_id BIGINT UNSIGNED COMMENT '发生变化的SKU内部主键；商品级事件可空', 
+	snapshot_id BIGINT UNSIGNED NOT NULL COMMENT '变化后的商品快照主键，关联 product_snapshots.id', 
+	previous_snapshot_id BIGINT UNSIGNED COMMENT '变化前的商品快照主键；首次发现商品时为空', 
+	event_type VARCHAR(32) NOT NULL COMMENT '事件：product_new=新发现，price_changed=价格变化，discount_started/ended=折扣始末，stockout/restocked=缺补货，variant_changed/content_changed=规格或内容变化，product_removed=确认下架', 
+	old_value JSON COMMENT '变化前的业务值JSON；金额用字符串保存', 
+	new_value JSON COMMENT '变化后的业务值JSON；金额用字符串保存', 
+	detected_at DATETIME(6) NOT NULL COMMENT '检测到该变化的时间（UTC）' DEFAULT CURRENT_TIMESTAMP(6), 
+	event_hash CHAR(64) CHARACTER SET ascii COLLATE ascii_bin NOT NULL COMMENT '变化事件SHA-256幂等键，避免同一对快照重复生成事件', 
+	id BIGINT UNSIGNED NOT NULL COMMENT '数据库内部自增主键' AUTO_INCREMENT, 
+	created_at DATETIME(6) NOT NULL COMMENT '记录创建时间（UTC，微秒精度）' DEFAULT CURRENT_TIMESTAMP(6), 
+	CONSTRAINT pk_change_events PRIMARY KEY (id), 
+	CONSTRAINT uq_change_events_hash UNIQUE (event_hash), 
+	CONSTRAINT fk_change_events_snapshot FOREIGN KEY(snapshot_id, product_id) REFERENCES product_snapshots (id, product_id) ON DELETE RESTRICT, 
+	CONSTRAINT fk_change_events_previous FOREIGN KEY(previous_snapshot_id, product_id) REFERENCES product_snapshots (id, product_id) ON DELETE RESTRICT, 
+	CONSTRAINT fk_change_events_variant FOREIGN KEY(variant_id, product_id) REFERENCES product_variants (id, product_id) ON DELETE RESTRICT, 
+	CONSTRAINT ck_change_events_event_type CHECK (event_type IN ('product_new', 'price_changed', 'discount_started', 'discount_ended', 'stockout', 'restocked', 'variant_changed', 'content_changed', 'product_removed')), 
+	CONSTRAINT fk_change_events_product_id_products FOREIGN KEY(product_id) REFERENCES products (id) ON DELETE RESTRICT
+) ENGINE=InnoDB CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='商品与SKU变化事件及前后快照证据';
+
+CREATE INDEX ix_change_events_product_time ON change_events (product_id, detected_at);
+
+CREATE INDEX ix_change_events_type_time ON change_events (event_type, detected_at);
+
+CREATE TABLE IF NOT EXISTS variant_snapshots (
+	product_snapshot_id BIGINT UNSIGNED NOT NULL COMMENT '本次商品快照内部主键，关联 product_snapshots.id', 
+	product_id BIGINT UNSIGNED NOT NULL COMMENT '所属商品内部主键，用于校验SKU与商品快照归属一致', 
+	variant_id BIGINT UNSIGNED NOT NULL COMMENT 'SKU内部主键，关联 product_variants.id', 
+	captured_at DATETIME(6) NOT NULL COMMENT '该SKU本次实际观察时间（UTC）', 
+	currency VARCHAR(3) NOT NULL COMMENT '该次SKU价格币种，美国站默认 USD' DEFAULT 'USD', 
+	price NUMERIC(12, 2) COMMENT '该SKU本次明确单价；未获取时为空', 
+	original_price NUMERIC(12, 2) COMMENT '该SKU本次展示原价；未展示时为空', 
+	stock_status VARCHAR(32) NOT NULL COMMENT '本次SKU库存：unknown=未知，in_stock=有货，out_of_stock=缺货，partial=部分可用' DEFAULT 'unknown', 
+	available_quantity BIGINT UNSIGNED COMMENT '该SKU本次公开可售数量；未公开时为空', 
+	variant_payload_hash CHAR(64) CHARACTER SET ascii COLLATE ascii_bin COMMENT '该SKU本次稳定内容的SHA-256摘要', 
+	id BIGINT UNSIGNED NOT NULL COMMENT '数据库内部自增主键' AUTO_INCREMENT, 
+	created_at DATETIME(6) NOT NULL COMMENT '记录创建时间（UTC，微秒精度）' DEFAULT CURRENT_TIMESTAMP(6), 
+	CONSTRAINT pk_variant_snapshots PRIMARY KEY (id), 
+	CONSTRAINT uq_variant_snapshots_capture UNIQUE (product_snapshot_id, variant_id), 
+	CONSTRAINT fk_variant_snapshots_capture FOREIGN KEY(product_snapshot_id, product_id) REFERENCES product_snapshots (id, product_id) ON DELETE RESTRICT, 
+	CONSTRAINT fk_variant_snapshots_variant FOREIGN KEY(variant_id, product_id) REFERENCES product_variants (id, product_id) ON DELETE RESTRICT, 
+	CONSTRAINT ck_variant_snapshots_price CHECK (price IS NULL OR price >= 0), 
+	CONSTRAINT ck_variant_snapshots_original_price CHECK (original_price IS NULL OR original_price >= 0), 
+	CONSTRAINT ck_variant_snapshots_stock_status CHECK (stock_status IN ('unknown', 'in_stock', 'out_of_stock', 'partial'))
+) ENGINE=InnoDB CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='同一次商品采集下各SKU的价格与库存历史快照';
+
+CREATE INDEX ix_variant_snapshots_history ON variant_snapshots (variant_id, captured_at);

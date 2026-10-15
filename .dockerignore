@@ -1,0 +1,17 @@
+.venv
+.idea
+.playwright-mcp
+.pytest_cache
+**/__pycache__
+**/*.pyc
+**/node_modules
+*.env
+.env
+.env.*
+data/samples
+data/exports
+data/collections
+js_reverse_cache
+**/*.log
+.git
+tests

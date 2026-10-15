@@ -1,0 +1,424 @@
+{
+  "authorized_on": "2026-10-13",
+  "authorization": "User explicitly allowed replacing unverified original names with verified same-category US clothing stores.",
+  "replacements": [
+    {
+      "category": "women_clothing",
+      "old_seed_value": "Agivvia",
+      "new_row": {
+        "region": "US",
+        "category": "women_clothing",
+        "seed_type": "shop_name",
+        "seed_value": "ANRABESS",
+        "shop_url": "https://shop.tiktok.com/us/store/anrabess/7495434645551745353",
+        "source_url": "https://shop.tiktok.com/us/store/anrabess/7495434645551745353",
+        "verification_status": "verified_public_shop_page",
+        "observed_at": "2026-10-13"
+      },
+      "platform_shop_id": "7495434645551745353",
+      "verified_at": "2026-10-13T20:54:02.426531+08:00",
+      "evidence_path": "D:\\Project\\tiktok-shop-monitor\\data\\samples\\seed-links\\pages\\c9fe54aab43235964acba4f177dd633c1d6ecf87b8e9dbcb5f749212d752bfdc.json",
+      "proposal_row_hash": "01f14860af2e3b9b0e1da26aaa0c84de31bbe8691f0b6c5c6540a397d6d0a523",
+      "proposed_name": "ANRABESS"
+    },
+    {
+      "category": "women_clothing",
+      "old_seed_value": "ELLSWYN",
+      "new_row": {
+        "region": "US",
+        "category": "women_clothing",
+        "seed_type": "shop_name",
+        "seed_value": "Dokotoo",
+        "shop_url": "https://shop.tiktok.com/us/store/dokotoo/7495467852373330933",
+        "source_url": "https://shop.tiktok.com/us/store/dokotoo/7495467852373330933",
+        "verification_status": "verified_public_shop_page",
+        "observed_at": "2026-10-13"
+      },
+      "platform_shop_id": "7495467852373330933",
+      "verified_at": "2026-10-13T20:58:25.891334+08:00",
+      "evidence_path": "D:\\Project\\tiktok-shop-monitor\\data\\samples\\seed-links\\pages\\ed44f75df97234e0a23713fe9d8e76c900069faf46bcbbb1b439f3c438b46d42.json",
+      "proposal_row_hash": "21ef60a3a057071e5104ffe8558846dd4473e42270a97f39e34e33749f24ca33",
+      "proposed_name": "Dokotoo"
+    },
+    {
+      "category": "women_clothing",
+      "old_seed_value": "Emberwild Studio",
+      "new_row": {
+        "region": "US",
+        "category": "women_clothing",
+        "seed_type": "shop_name",
+        "seed_value": "Zeagoo",
+        "shop_url": "https://shop.tiktok.com/us/store/zeagoo/7495376823266413478",
+        "source_url": "https://shop.tiktok.com/us/store/zeagoo/7495376823266413478",
+        "verification_status": "verified_public_shop_page",
+        "observed_at": "2026-10-13"
+      },
+      "platform_shop_id": "7495376823266413478",
+      "verified_at": "2026-10-13T20:55:16.036622+08:00",
+      "evidence_path": "D:\\Project\\tiktok-shop-monitor\\data\\samples\\seed-links\\pages\\2ed4acb10a85c70e3ad8a00d3b5047640300921c1faa82329efcd41ad622867e.json",
+      "proposal_row_hash": "d805c68fb281255d517ea270859e1da003203f2ad87d3ae863d7bfcca149df9a",
+      "proposed_name": "Zeagoo"
+    },
+    {
+      "category": "women_clothing",
+      "old_seed_value": "GrivGear",
+      "new_row": {
+        "region": "US",
+        "category": "women_clothing",
+        "seed_type": "shop_name",
+        "seed_value": "Cider USA",
+        "shop_url": "https://shop.tiktok.com/us/store/cider-usa/7495157021229156728",
+        "source_url": "https://shop.tiktok.com/us/store/cider-usa/7495157021229156728",
+        "verification_status": "verified_public_shop_page",
+        "observed_at": "2026-10-13"
+      },
+      "platform_shop_id": "7495157021229156728",
+      "verified_at": "2026-10-13T20:54:37.816205+08:00",
+      "evidence_path": "D:\\Project\\tiktok-shop-monitor\\data\\samples\\seed-links\\pages\\3656874dc3d09e36578434348a275ce022b89b793d08596f28c6eaf104c34f8c.json",
+      "proposal_row_hash": "94fc17e903b4a93da0635b084074720f43fc81d0344ab91d0082c55d0a0dfe07",
+      "proposed_name": "Cider USA"
+    },
+    {
+      "category": "women_clothing",
+      "old_seed_value": "Peaktra",
+      "new_row": {
+        "region": "US",
+        "category": "women_clothing",
+        "seed_type": "shop_name",
+        "seed_value": "BloomChic",
+        "shop_url": "https://shop.tiktok.com/us/store/bloomchic/7496161875731122249",
+        "source_url": "https://shop.tiktok.com/us/store/bloomchic/7496161875731122249",
+        "verification_status": "verified_public_shop_page",
+        "observed_at": "2026-10-13"
+      },
+      "platform_shop_id": "7496161875731122249",
+      "verified_at": "2026-10-13T20:55:01.883257+08:00",
+      "evidence_path": "D:\\Project\\tiktok-shop-monitor\\data\\samples\\seed-links\\pages\\8f18188d31ce29c2dabae52630c1107a0617bf875791c92d862be5f408d86c78.json",
+      "proposal_row_hash": "a5bdf28905f631ef3ed1f1fe3904ea26e9f89abf120994e54485c33538109899",
+      "proposed_name": "BloomChic"
+    },
+    {
+      "category": "women_dresses",
+      "old_seed_value": "JANES FACTORY",
+      "new_row": {
+        "region": "US",
+        "category": "women_dresses",
+        "seed_type": "shop_name",
+        "seed_value": "RIHOAS-STORE",
+        "shop_url": "https://shop.tiktok.com/us/store/rihoas-store/7496019479878470056",
+        "source_url": "https://shop.tiktok.com/us/store/rihoas-store/7496019479878470056",
+        "verification_status": "verified_public_shop_page",
+        "observed_at": "2026-10-13"
+      },
+      "platform_shop_id": "7496019479878470056",
+      "verified_at": "2026-10-13T20:54:05.903141+08:00",
+      "evidence_path": "D:\\Project\\tiktok-shop-monitor\\data\\samples\\seed-links\\pages\\c471575383264393f9fb533a286fde03a1b014e145761db9f015cd872014e42a.json",
+      "proposal_row_hash": "0ae970c8c963cf215be944ac3fb7d7928de1757a7400be29ef1ecbab6bb8a605",
+      "proposed_name": "RIHOAS-STORE"
+    },
+    {
+      "category": "women_dresses",
+      "old_seed_value": "Muse Diary",
+      "new_row": {
+        "region": "US",
+        "category": "women_dresses",
+        "seed_type": "shop_name",
+        "seed_value": "Rusttydustty Curve",
+        "shop_url": "https://shop.tiktok.com/us/store/rusttydustty-curve/8647015672118940045",
+        "source_url": "https://shop.tiktok.com/us/store/rusttydustty-curve/8647015672118940045",
+        "verification_status": "verified_public_shop_page",
+        "observed_at": "2026-10-13"
+      },
+      "platform_shop_id": "8647015672118940045",
+      "verified_at": "2026-10-13T20:50:50.086349+08:00",
+      "evidence_path": "D:\\Project\\tiktok-shop-monitor\\data\\samples\\seed-links\\pages\\1c0e602aa3fe18c71a1dc936a8444a27051f7c10b84530f11ad68ae951b847f2.json",
+      "proposal_row_hash": "83e0395bbe27c710eb313994c990e8920709de5d1eb52eb30a5b10b416e3d096",
+      "proposed_name": "Rusttydustty Curve"
+    },
+    {
+      "category": "women_dresses",
+      "old_seed_value": "Top MOMO",
+      "new_row": {
+        "region": "US",
+        "category": "women_dresses",
+        "seed_type": "shop_name",
+        "seed_value": "RETRO STAGE SHOP",
+        "shop_url": "https://shop.tiktok.com/us/store/retro-stage-shop/7495820950489958822",
+        "source_url": "https://shop.tiktok.com/us/store/retro-stage-shop/7495820950489958822",
+        "verification_status": "verified_public_shop_page",
+        "observed_at": "2026-10-13"
+      },
+      "platform_shop_id": "7495820950489958822",
+      "verified_at": "2026-10-13T20:54:56.420607+08:00",
+      "evidence_path": "D:\\Project\\tiktok-shop-monitor\\data\\samples\\seed-links\\pages\\f78050253cfe71b5392bcde6bf2f6298e4e22fafd8658962c3288331fa8a037c.json",
+      "proposal_row_hash": "97492740c184300adac775c8aee45809931e30636cb12bceef94cca0ebf729e1",
+      "proposed_name": "RETRO STAGE SHOP"
+    },
+    {
+      "category": "men_clothing",
+      "old_seed_value": "Chic Tag",
+      "new_row": {
+        "region": "US",
+        "category": "men_clothing",
+        "seed_type": "shop_name",
+        "seed_value": "COOFANDY Selection",
+        "shop_url": "https://shop.tiktok.com/us/store/coofandy-selection/7495811669616069229",
+        "source_url": "https://shop.tiktok.com/us/store/coofandy-selection/7495811669616069229",
+        "verification_status": "verified_public_shop_page",
+        "observed_at": "2026-10-13"
+      },
+      "platform_shop_id": "7495811669616069229",
+      "verified_at": "2026-10-13T20:50:46.14814+08:00",
+      "evidence_path": "D:\\Project\\tiktok-shop-monitor\\data\\samples\\seed-links\\pages\\0a8059643dad8798603dc8a5199d8c949cbf254210bf5de23107a73dbb8352e5.json",
+      "proposal_row_hash": "40cec3ba812b076d02255abc19526e49e4fccaf2392b7820567d9ed2094e1129",
+      "proposed_name": "COOFANDY Selection"
+    },
+    {
+      "category": "men_clothing",
+      "old_seed_value": "Phoenix man",
+      "new_row": {
+        "region": "US",
+        "category": "men_clothing",
+        "seed_type": "shop_name",
+        "seed_value": "Pacsun",
+        "shop_url": "https://shop.tiktok.com/us/store/pacsun/7494799091918736026",
+        "source_url": "https://shop.tiktok.com/us/store/pacsun/7494799091918736026",
+        "verification_status": "verified_public_shop_page",
+        "observed_at": "2026-10-13"
+      },
+      "platform_shop_id": "7494799091918736026",
+      "verified_at": "2026-10-13T20:54:30.615308+08:00",
+      "evidence_path": "D:\\Project\\tiktok-shop-monitor\\data\\samples\\seed-links\\pages\\6c9fc3a3947cfca7284b5ae403d86248aa03125690193afd98917a77a7b47449.json",
+      "proposal_row_hash": "5c1482f747b74b6119c4e461660f602fef1a349566e23eb1b1190a5e15480939",
+      "proposed_name": "Pacsun"
+    },
+    {
+      "category": "men_clothing",
+      "old_seed_value": "Urban Apex Co.",
+      "new_row": {
+        "region": "US",
+        "category": "men_clothing",
+        "seed_type": "shop_name",
+        "seed_value": "Dickies",
+        "shop_url": "https://shop.tiktok.com/us/store/dickies/7494425155362784575",
+        "source_url": "https://shop.tiktok.com/us/store/dickies/7494425155362784575",
+        "verification_status": "verified_public_shop_page",
+        "observed_at": "2026-10-13"
+      },
+      "platform_shop_id": "7494425155362784575",
+      "verified_at": "2026-10-13T20:54:17.217996+08:00",
+      "evidence_path": "D:\\Project\\tiktok-shop-monitor\\data\\samples\\seed-links\\pages\\67ffc1c27afebedad112d8e53be2c6414b317167ded661fa209c63a76dbf8714.json",
+      "proposal_row_hash": "2e6688c9fda007a61ce39e6194ce4d0e345b25bfa51109168095f59a6581b0bc",
+      "proposed_name": "Dickies"
+    },
+    {
+      "category": "activewear",
+      "old_seed_value": "DFYNGsport.",
+      "new_row": {
+        "region": "US",
+        "category": "activewear",
+        "seed_type": "shop_name",
+        "seed_value": "CRZ YOGA",
+        "shop_url": "https://shop.tiktok.com/us/store/crz-yoga-us/7495539245630589729",
+        "source_url": "https://shop.tiktok.com/us/store/crz-yoga-us/7495539245630589729",
+        "verification_status": "verified_public_shop_page",
+        "observed_at": "2026-10-13"
+      },
+      "platform_shop_id": "7495539245630589729",
+      "verified_at": "2026-10-13T20:55:29.929786+08:00",
+      "evidence_path": "D:\\Project\\tiktok-shop-monitor\\data\\samples\\seed-links\\pages\\a005d502813b4f9ffd27fcdfc248938ee9e6374f5acc7eea5518f7592ffc354f.json",
+      "proposal_row_hash": "fe3516c1819467de3d8c35f1110240afbbf42c2a14cabd4231ac07ab4209acaa",
+      "proposed_name": "CRZ YOGA"
+    },
+    {
+      "category": "activewear",
+      "old_seed_value": "NORMOV US",
+      "new_row": {
+        "region": "US",
+        "category": "activewear",
+        "seed_type": "shop_name",
+        "seed_value": "ODODOS",
+        "shop_url": "https://shop.tiktok.com/us/store/ododos/7495354038587984072",
+        "source_url": "https://shop.tiktok.com/us/store/ododos/7495354038587984072",
+        "verification_status": "verified_public_shop_page",
+        "observed_at": "2026-10-13"
+      },
+      "platform_shop_id": "7495354038587984072",
+      "verified_at": "2026-10-13T20:54:34.474443+08:00",
+      "evidence_path": "D:\\Project\\tiktok-shop-monitor\\data\\samples\\seed-links\\pages\\33f228a287eda0353baddf1680b3c0009dc879e232d4689ac5ce7923a135caac.json",
+      "proposal_row_hash": "78a04889d8c7ff1ccd9fdf02160995a5cffac24b2abb0f28c98e678202eeb12e",
+      "proposed_name": "ODODOS"
+    },
+    {
+      "category": "activewear",
+      "old_seed_value": "Pretty Girl Fits",
+      "new_row": {
+        "region": "US",
+        "category": "activewear",
+        "seed_type": "shop_name",
+        "seed_value": "OQQfitness",
+        "shop_url": "https://shop.tiktok.com/us/store/oqqfitness/7495274562887256446",
+        "source_url": "https://shop.tiktok.com/us/store/oqqfitness/7495274562887256446",
+        "verification_status": "verified_public_shop_page",
+        "observed_at": "2026-10-13"
+      },
+      "platform_shop_id": "7495274562887256446",
+      "verified_at": "2026-10-13T20:55:19.364323+08:00",
+      "evidence_path": "D:\\Project\\tiktok-shop-monitor\\data\\samples\\seed-links\\pages\\2e1b4017fe1e7f02c8e8bd6f728626cac2332e2f3b348cd5d9967c74798301fe.json",
+      "proposal_row_hash": "dfa01e19ec761f7cdaef21f82627d7090df7cb184349fb45e76831b1ea34e195",
+      "proposed_name": "OQQfitness"
+    },
+    {
+      "category": "activewear",
+      "old_seed_value": "WYS Womens clothing",
+      "new_row": {
+        "region": "US",
+        "category": "activewear",
+        "seed_type": "shop_name",
+        "seed_value": "QINSEN",
+        "shop_url": "https://shop.tiktok.com/us/store/qinsen/7495294890295659065",
+        "source_url": "https://shop.tiktok.com/us/store/qinsen/7495294890295659065",
+        "verification_status": "verified_public_shop_page",
+        "observed_at": "2026-10-13"
+      },
+      "platform_shop_id": "7495294890295659065",
+      "verified_at": "2026-10-13T20:54:10.300783+08:00",
+      "evidence_path": "D:\\Project\\tiktok-shop-monitor\\data\\samples\\seed-links\\pages\\b900ea2e982f2e2c8291af1dfb485cc854272be28b1159eb758521f6fa759357.json",
+      "proposal_row_hash": "2091e19a6411210b8c4e983821fe3669aa5e00209ce0b7ed98bcde428a3f42e5",
+      "proposed_name": "QINSEN"
+    },
+    {
+      "category": "sportswear",
+      "old_seed_value": "DFsportonu",
+      "new_row": {
+        "region": "US",
+        "category": "sportswear",
+        "seed_type": "shop_name",
+        "seed_value": "Baleaf Us",
+        "shop_url": "https://shop.tiktok.com/us/store/baleaf-us/7495922132352338761",
+        "source_url": "https://shop.tiktok.com/us/store/baleaf-us/7495922132352338761",
+        "verification_status": "verified_public_shop_page",
+        "observed_at": "2026-10-13"
+      },
+      "platform_shop_id": "7495922132352338761",
+      "verified_at": "2026-10-13T20:55:06.716192+08:00",
+      "evidence_path": "D:\\Project\\tiktok-shop-monitor\\data\\samples\\seed-links\\pages\\ac92753eb54b6647e7b234b517db738072b69c1360c40446424c669bd85cdb93.json",
+      "proposal_row_hash": "a6f8234da0d317d351ae59e7e5a80b1cc62fb96a03ae133c31ec8ca2686ea53d",
+      "proposed_name": "Baleaf Us"
+    },
+    {
+      "category": "sportswear",
+      "old_seed_value": "FORGE SPORTSWEAR",
+      "new_row": {
+        "region": "US",
+        "category": "sportswear",
+        "seed_type": "shop_name",
+        "seed_value": "Fabletics",
+        "shop_url": "https://shop.tiktok.com/us/store/fabletics/7495659886450150193",
+        "source_url": "https://shop.tiktok.com/us/store/fabletics/7495659886450150193",
+        "verification_status": "verified_public_shop_page",
+        "observed_at": "2026-10-13"
+      },
+      "platform_shop_id": "7495659886450150193",
+      "verified_at": "2026-10-13T20:54:27.538793+08:00",
+      "evidence_path": "D:\\Project\\tiktok-shop-monitor\\data\\samples\\seed-links\\pages\\61e1a60b400c927aa95ca5a0ba224bd9a3dc07215b30cad0acce6e5bf3afb676.json",
+      "proposal_row_hash": "57f34471d3818e5e01b77a321282c40374578badb1eb90ce178b0765e389eb4d",
+      "proposed_name": "Fabletics"
+    },
+    {
+      "category": "sportswear",
+      "old_seed_value": "Golden Ridge Fashion",
+      "new_row": {
+        "region": "US",
+        "category": "sportswear",
+        "seed_type": "shop_name",
+        "seed_value": "AUROLA",
+        "shop_url": "https://shop.tiktok.com/us/store/aurola-active/7495759529592850989",
+        "source_url": "https://shop.tiktok.com/us/store/aurola-active/7495759529592850989",
+        "verification_status": "verified_public_shop_page",
+        "observed_at": "2026-10-13"
+      },
+      "platform_shop_id": "7495759529592850989",
+      "verified_at": "2026-10-13T20:54:41.675318+08:00",
+      "evidence_path": "D:\\Project\\tiktok-shop-monitor\\data\\samples\\seed-links\\pages\\bba6b55712e29ca92259b76656e7300eb04a0f3d511dedd92366c6ee09641bb6.json",
+      "proposal_row_hash": "96b69035b94b31a5a7a278c0ee2c71cb94a0e80631f42958458c0dec7db2e5a2",
+      "proposed_name": "AUROLA"
+    },
+    {
+      "category": "sportswear",
+      "old_seed_value": "KOVA Active",
+      "new_row": {
+        "region": "US",
+        "category": "sportswear",
+        "seed_type": "shop_name",
+        "seed_value": "YEOREO Shop",
+        "shop_url": "https://shop.tiktok.com/us/store/yeoreo-shop/7496309916251556825",
+        "source_url": "https://shop.tiktok.com/us/store/yeoreo-shop/7496309916251556825",
+        "verification_status": "verified_public_shop_page",
+        "observed_at": "2026-10-13"
+      },
+      "platform_shop_id": "7496309916251556825",
+      "verified_at": "2026-10-13T20:50:54.4374+08:00",
+      "evidence_path": "D:\\Project\\tiktok-shop-monitor\\data\\samples\\seed-links\\pages\\91ba573bb50c537c88b3639f94656836f0c9fafd661ec81a66c7b5cffebd8311.json",
+      "proposal_row_hash": "bb04dda1be65802510005c8f027e76c3d048a8dd9cb4055a1c8896b9a0d48c06",
+      "proposed_name": "YEOREO Shop"
+    },
+    {
+      "category": "sportswear",
+      "old_seed_value": "LANTO",
+      "new_row": {
+        "region": "US",
+        "category": "sportswear",
+        "seed_type": "shop_name",
+        "seed_value": "NELEUS",
+        "shop_url": "https://shop.tiktok.com/us/store/neleus/7495355413545322570",
+        "source_url": "https://shop.tiktok.com/us/store/neleus/7495355413545322570",
+        "verification_status": "verified_public_shop_page",
+        "observed_at": "2026-10-13"
+      },
+      "platform_shop_id": "7495355413545322570",
+      "verified_at": "2026-10-13T20:55:24.053461+08:00",
+      "evidence_path": "D:\\Project\\tiktok-shop-monitor\\data\\samples\\seed-links\\pages\\24dd229fb20cef2d77d5084fe9ed261a39fa66a4265da5d14bf5aa8264a4baae.json",
+      "proposal_row_hash": "edbda271289051fb69dd150ae44daa7297e9733d218b87cb8312011600a8fecb",
+      "proposed_name": "NELEUS"
+    },
+    {
+      "category": "sportswear",
+      "old_seed_value": "Soluna Style",
+      "new_row": {
+        "region": "US",
+        "category": "sportswear",
+        "seed_type": "shop_name",
+        "seed_value": "THE GYM PEOPLE US",
+        "shop_url": "https://shop.tiktok.com/us/store/the-gym-people-us/7495787329076365515",
+        "source_url": "https://shop.tiktok.com/us/store/the-gym-people-us/7495787329076365515",
+        "verification_status": "verified_public_shop_page",
+        "observed_at": "2026-10-13"
+      },
+      "platform_shop_id": "7495787329076365515",
+      "verified_at": "2026-10-13T20:55:10.724268+08:00",
+      "evidence_path": "D:\\Project\\tiktok-shop-monitor\\data\\samples\\seed-links\\pages\\3e138bca82249816aa6429687fb52d21e9b8b4fa5cc9bceb7b8fabb00024b51f.json",
+      "proposal_row_hash": "be853be6e0a443596e15d8144cdd85ffb840da74dd18103cc19a42f6b5d4a97d",
+      "proposed_name": "THE GYM PEOPLE US"
+    },
+    {
+      "category": "lingerie",
+      "old_seed_value": "AESKEIA",
+      "new_row": {
+        "region": "US",
+        "category": "lingerie",
+        "seed_type": "shop_name",
+        "seed_value": "SHAPELLX",
+        "shop_url": "https://shop.tiktok.com/us/store/shapellx/7494990815496866432",
+        "source_url": "https://shop.tiktok.com/us/store/shapellx/7494990815496866432",
+        "verification_status": "verified_public_shop_page",
+        "observed_at": "2026-10-13"
+      },
+      "platform_shop_id": "7494990815496866432",
+      "verified_at": "2026-10-13T20:54:23.909417+08:00",
+      "evidence_path": "D:\\Project\\tiktok-shop-monitor\\data\\samples\\seed-links\\pages\\e19e72989f961b9dd2957b315e4e56629c5e865e542818b13789e26d05241b5e.json",
+      "proposal_row_hash": "4753617413c73d09153e44738d385ebbf1ac9a19d68e8800fb1312d978952956",
+      "proposed_name": "SHAPELLX"
+    }
+  ]
+}

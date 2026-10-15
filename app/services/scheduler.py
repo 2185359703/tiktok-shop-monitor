@@ -1,0 +1,103 @@
+"""Recover leases and redispatch due database rows; no SQL/MQ dual-write gap."""
+
+from sqlalchemy import and_, func, or_, select
+
+from app.models import CrawlTask, TaskStatus, TaskType
+from app.queue.contracts import TaskMessage
+from app.services.task_runtime import recover_expired_leases
+from app.storage.database import session_scope
+from app.services.snapshot_service import enqueue_due_snapshots
+
+
+READY = (TaskStatus.PENDING, TaskStatus.RETRY_WAITING, TaskStatus.ABANDONED)
+
+
+def task_counts(session, settings):
+    return session.execute(select(CrawlTask.task_type, CrawlTask.status, func.count()).where(
+        CrawlTask.platform == settings.platform, CrawlTask.region == settings.region,
+    ).group_by(CrawlTask.task_type, CrawlTask.status)).all()
+
+
+class Scheduler:
+    def __init__(self, settings, factory, broker, gate, metrics):
+        self.settings, self.factory, self.broker, self.gate, self.metrics = settings, factory, broker, gate, metrics
+        self.cursors = {}
+        self.rotation = 0
+
+    def dispatch_once(self) -> dict:
+        settings = self.settings
+        with session_scope(self.factory) as session:
+            recovered = recover_expired_leases(session, settings)
+            scheduled = enqueue_due_snapshots(session, settings, limit=settings.dispatch_batch_size)
+            counts = task_counts(session, settings)
+        self.metrics.recovered.inc(recovered)
+        self.metrics.queue_depth.clear()
+        for kind, status, count in counts:
+            self.metrics.queue_depth.labels(kind.value, status.value).set(count)
+        enabled = settings.enabled_task_types
+        if enabled and self.gate.pause_remaining():
+            enabled = tuple(kind for kind in enabled if kind in {TaskType.CHANGE_DETECTION, TaskType.REPORT_GENERATION})
+        if not enabled:
+            return {"recovered": recovered, "published": 0, "snapshots_scheduled": scheduled}
+        published = scanned = 0
+        enabled = tuple(enabled)
+        start = self.rotation % len(enabled)
+        self.rotation += 1
+        ordered = enabled[start:] + enabled[:start]
+        backpressured = []
+        per_kind_budget = max(1, settings.dispatch_batch_size // len(enabled))
+        per_kind_scan = max(1, settings.dispatch_scan_limit // len(enabled))
+        for kind in ordered:
+            if scanned >= settings.dispatch_scan_limit or published >= settings.dispatch_batch_size:
+                break
+            ready = self.broker.ready_count(kind)
+            high = (settings.dispatch_local_queue_high_watermark
+                    if kind in {TaskType.CHANGE_DETECTION, TaskType.REPORT_GENERATION}
+                    else settings.dispatch_queue_high_watermark)
+            budget = min(per_kind_budget, high - ready, settings.dispatch_batch_size - published)
+            if budget <= 0:
+                backpressured.append(kind.value)
+                continue
+            kind_published = kind_scanned = 0
+            while kind_scanned < per_kind_scan and kind_published < budget:
+                with self.factory() as session:
+                    query = select(CrawlTask).where(
+                        CrawlTask.platform == settings.platform, CrawlTask.region == settings.region,
+                        CrawlTask.task_type == kind, CrawlTask.status.in_(READY),
+                        CrawlTask.available_at <= func.utc_timestamp(6), CrawlTask.lease_token.is_(None),
+                        CrawlTask.attempt_count < CrawlTask.max_attempts,
+                    )
+                    cursor = self.cursors.get(kind)
+                    if cursor:
+                        priority, identifier = cursor
+                        query = query.where(or_(CrawlTask.priority < priority,
+                                               and_(CrawlTask.priority == priority, CrawlTask.id > identifier)))
+                    rows = session.scalars(query.order_by(CrawlTask.priority.desc(), CrawlTask.id).limit(
+                        min(100, per_kind_scan - kind_scanned, settings.dispatch_scan_limit - scanned))).all()
+                if not rows:
+                    self.cursors[kind] = None
+                    break
+                for task in rows:
+                    self.cursors[kind] = task.priority, task.id
+                    scanned += 1
+                    kind_scanned += 1
+                    key = f"{task.task_id}:{task.attempt_count}:{task.available_at.isoformat()}"
+                    token = self.gate.reserve_publish(key)
+                    if token is None:
+                        continue
+                    try:
+                        self.broker.publish(TaskMessage(task.task_id, task.task_type))
+                    except Exception:
+                        self.gate.release_publish(key, token)
+                        # Do not skip the failed row behind an advanced cursor.
+                        self.cursors[kind] = None
+                        raise
+                    published += 1
+                    kind_published += 1
+                    self.metrics.published.labels(task.task_type.value).inc()
+                    if kind_published >= budget or scanned >= settings.dispatch_scan_limit:
+                        break
+                if scanned >= settings.dispatch_scan_limit:
+                    break
+        return {"recovered": recovered, "published": published, "snapshots_scheduled": scheduled,
+                "backpressured_types": backpressured}

@@ -1,0 +1,52 @@
+# Google VPS 上的美国站服装全量任务配置；密钥由 deployment.env 注入。
+[scope]
+platform = "tiktok_shop"
+region = "US"
+currency = "USD"
+pricing_context = "public_listed"
+
+[runtime]
+enabled_task_types = ["shop_discovery", "product_discovery", "product_detail", "change_detection", "report_generation"]
+lease_seconds = 120
+heartbeat_seconds = 15
+poll_seconds = 5
+dispatch_batch_size = 100
+dispatch_scan_limit = 1000
+dispatch_queue_high_watermark = 64
+dispatch_local_queue_high_watermark = 16
+publish_dedup_seconds = 30
+retry_base_seconds = 10
+retry_max_seconds = 300
+product_discovery_max_pages = 500
+snapshot_interval_seconds = 3600
+periodic_snapshots_enabled = false
+monitored_product_ids = []
+# 首次详情请求同事务保存真实基线，不为建立基线重复请求每个商品。
+baseline_on_detail = true
+
+[queue]
+broker_generation = "g20261015"
+exchange = "tiktok_shop.tasks"
+queue_prefix = "tiktok_shop"
+dead_letter_exchange = "tiktok_shop.dead"
+dead_letter_queue = "tiktok_shop.dead_letter"
+prefetch = 1
+
+[request]
+# 仅 PDP 使用此兼容客户端；店铺身份和匿名列表仍使用 HTTPX。
+detail_http_backend = "curl_cffi"
+# 单个 HTTP 200 验证页冷却该资源；401/403/429 仍暂停整个市场。
+resource_document_cooldown = true
+minimum_interval_seconds = 2.0
+access_pause_seconds = 900
+evidence_directory = "data/samples/runtime"
+
+[server]
+host = "0.0.0.0"
+port = 8000
+worker_metrics_port = 8001
+scheduler_metrics_port = 8002
+
+[report]
+report_directory = "data/exports/reports"
+collection_directory = "data/collections"

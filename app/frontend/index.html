@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#3765ef">
+  <meta name="description" content="TikTok Shop 服装商品、店铺与价格变化监测工作台">
+  <title>ShopScope · 服装监测工作台</title>
+  <link rel="preload" href="/ui-assets/fonts/dm-sans-latin.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="preload" href="/ui-assets/fonts/manrope-latin.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='9' fill='%233765ef'/%3E%3Cpath d='M9 11h14l-1 13H10L9 11Zm4 0V9a3 3 0 0 1 6 0v2' fill='none' stroke='white' stroke-width='2'/%3E%3C/svg%3E">
+  <link rel="stylesheet" href="/ui-assets/styles.css">
+  <link rel="stylesheet" href="/ui-assets/workbench.css">
+  <script type="module" src="/ui-assets/app.js"></script>
+</head>
+<body>
+  <a class="skip-link" href="#main">跳至主要内容</a>
+  <div class="workspace-frame">
+  <aside class="sidebar" id="sidebar" aria-label="主导航">
+    <a class="brand" href="#workbench" aria-label="ShopScope 首页"><span class="brand-symbol" data-icon="bag"></span><span>ShopScope<small>服装市场监测</small></span></a>
+    <div class="workspace"><span class="workspace-avatar">US</span><div><strong>美国服装市场</strong><small>TikTok Shop · USD</small></div><span data-icon="chevrons" class="muted"></span></div>
+    <div class="nav-label">监测空间 <span>MONITOR</span></div>
+    <nav id="navigation">
+      <a href="#workbench" data-page="workbench"><span data-icon="chart"></span>数据工作台</a>
+      <a href="#overview" data-page="overview"><span data-icon="grid"></span>监测总览</a>
+      <a href="#shops" data-page="shops"><span data-icon="store"></span>店铺监测<span class="nav-count" id="shop-count">—</span></a>
+      <a href="#products" data-page="products"><span data-icon="shirt"></span>商品监测</a>
+      <a href="#matches" data-page="matches"><span data-icon="compare"></span>竞品匹配</a>
+      <a href="#events" data-page="events"><span data-icon="activity"></span>变化事件<span class="nav-dot" id="event-dot" hidden></span></a>
+      <div class="nav-label secondary-label">数据与运行</div>
+      <a href="#tasks" data-page="tasks"><span data-icon="layers"></span>采集任务</a>
+      <a href="#reports" data-page="reports"><span data-icon="file"></span>监测报告</a>
+    </nav>
+    <div class="sidebar-bottom">
+      <div class="scope-note"><span class="nav-label">当前数据范围</span><strong>TikTok Shop · 美国站</strong><p>服装商品 / 公开报价 / USD</p><a href="#reports">查看报告 <span data-icon="arrow"></span></a></div>
+      <button class="system-link" data-action="system"><span data-icon="settings"></span>系统状态<span class="status-dot" id="system-dot"></span></button>
+      <div class="profile"><span class="profile-avatar">S</span><div><strong>监测工作台</strong><small>Shop intelligence</small></div><span class="version">v0.1</span></div>
+    </div>
+  </aside>
+  <div class="mobile-backdrop" id="mobile-backdrop" hidden></div>
+  <div class="app-shell">
+    <header class="topbar">
+      <button class="icon-button mobile-menu" data-action="menu" aria-label="展开导航" aria-expanded="false"><span data-icon="menu"></span></button>
+      <div class="breadcrumb"><span>工作空间</span><span class="slash">/</span><strong id="breadcrumb">市场总览</strong></div>
+      <div class="topbar-right"><form class="global-search" id="global-search" role="search"><span data-icon="search"></span><input id="global-query" aria-label="搜索商品或店铺" placeholder="搜索商品、店铺…" autocomplete="off"><kbd>/</kbd></form><span class="market-pill"><span class="flag">🇺🇸</span><span id="market-label">美国站</span></span><button class="icon-button" data-action="system" aria-label="查看系统状态"><span data-icon="pulse"></span></button></div>
+    </header>
+    <main id="main" tabindex="-1">
+      <div class="page-heading"><div><div class="eyebrow" id="eyebrow">MONITORING OVERVIEW</div><h1 id="page-title">市场总览</h1><p id="page-description">价格、库存与商品变化，集中查看。</p></div><div class="heading-actions"><select id="window-select" aria-label="变化事件观察区间"><option value="24">最近 24 小时</option><option value="168">最近 7 天</option><option value="720">最近 30 天</option></select><button class="button" data-action="refresh" id="refresh-button"><span data-icon="refresh"></span><span>刷新数据</span></button></div></div>
+      <div class="data-strip"><div><span class="status-dot" id="connection-dot"></span><span id="connection-label">正在连接数据源</span><span class="strip-divider"></span><span id="last-updated">正在读取最新观察…</span></div><span class="strip-source">公开价格 · 已采集样本</span></div>
+      <div id="page-content" aria-live="polite" aria-busy="true"><div class="loading-state"><span class="loader"></span><h2>正在整理监测数据</h2><p>读取店铺、商品和最新市场变化…</p></div></div>
+      <footer class="page-footer"><span>ShopScope <span class="footer-separator">·</span> TikTok Shop 商品与价格监测</span><span>时间：Asia/Shanghai <span class="footer-separator">·</span> 价格：<span id="currency-label">USD</span></span></footer>
+    </main>
+  </div>
+  </div>
+  <dialog id="detail-dialog" class="detail-dialog" aria-labelledby="dialog-title"><div class="dialog-top"><span class="eyebrow" id="dialog-eyebrow">DETAILS</span><button class="icon-button" data-action="close-dialog" aria-label="关闭详情"><span data-icon="close"></span></button></div><div id="dialog-content"></div></dialog>
+  <div id="toast" class="toast" role="status" hidden></div>
+  <noscript><div class="noscript">请启用 JavaScript 以使用监测工作台。</div></noscript>
+</body>
+</html>

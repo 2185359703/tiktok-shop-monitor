@@ -1,0 +1,8 @@
+# 在详情兼容性验证期间推进名单与商品列表；详情任务留在原队列。
+services:
+  scheduler:
+    environment:
+      ENABLED_TASK_TYPES: shop_discovery,product_discovery,change_detection,report_generation
+  worker:
+    environment:
+      ENABLED_TASK_TYPES: shop_discovery,product_discovery,change_detection,report_generation

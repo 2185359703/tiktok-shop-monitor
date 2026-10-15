@@ -1,0 +1,129 @@
+name: tiktok-shop-monitor
+
+x-app: &app
+  build: .
+  environment: &app-env
+    DATABASE_URL: ${DATABASE_URL:?Set DATABASE_URL in deployment.env}
+    RABBITMQ_URL: ${RABBITMQ_URL:?Set RABBITMQ_URL in deployment.env}
+    REDIS_URL: ${REDIS_URL:?Set REDIS_URL in deployment.env}
+    API_TOKEN: ${API_TOKEN:-}
+    ENABLED_TASK_TYPES: ${ENABLED_TASK_TYPES:-}
+    API_HOST: 0.0.0.0
+    DB_POOL_SIZE: 5
+    DB_MAX_OVERFLOW: 5
+  restart: unless-stopped
+  stop_grace_period: 40s
+
+services:
+  mysql:
+    image: mysql:8.0.43
+    environment:
+      MYSQL_DATABASE: ${MYSQL_DATABASE:-tiktok_shop_monitor}
+      MYSQL_USER: ${MYSQL_USER:-tiktok_monitor}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:?Set MYSQL_PASSWORD}
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:?Set MYSQL_ROOT_PASSWORD}
+    command: ["--character-set-server=utf8mb4", "--collation-server=utf8mb4_0900_ai_ci", "--default-time-zone=+00:00"]
+    volumes:
+      - mysql_data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 --silent"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+    restart: unless-stopped
+
+  rabbitmq:
+    image: rabbitmq:4.1-management
+    environment:
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER:-tiktok_monitor}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD:?Set RABBITMQ_PASSWORD}
+    ports:
+      - "127.0.0.1:15672:15672"
+    volumes:
+      - rabbitmq_data:/var/lib/rabbitmq
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 10s
+      timeout: 10s
+      retries: 12
+    restart: unless-stopped
+
+  redis:
+    image: redis:7.4-alpine
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+
+  schema-init:
+    <<: *app
+    command: ["python", "-m", "app.storage.schema"]
+    depends_on:
+      mysql:
+        condition: service_healthy
+    restart: "no"
+
+  api:
+    <<: *app
+    command: ["python", "-m", "scripts.run_api"]
+    ports:
+      - "127.0.0.1:8000:8000"
+    volumes:
+      - report_exports:/opt/tiktok-shop-monitor/data/exports/reports:ro
+    depends_on:
+      schema-init:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health/ready', timeout=3)"]
+      interval: 15s
+      timeout: 5s
+      retries: 6
+
+  scheduler:
+    <<: *app
+    command: ["python", "-m", "scripts.run_scheduler"]
+    depends_on:
+      schema-init:
+        condition: service_completed_successfully
+      rabbitmq:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  worker:
+    <<: *app
+    command: ["python", "-m", "scripts.run_worker"]
+    depends_on:
+      schema-init:
+        condition: service_completed_successfully
+      rabbitmq:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - runtime_evidence:/opt/tiktok-shop-monitor/data/samples/runtime
+      - report_exports:/opt/tiktok-shop-monitor/data/exports/reports
+
+  prometheus:
+    image: prom/prometheus:v3.5.0
+    command: ["--config.file=/etc/prometheus/prometheus.yml"]
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./monitoring/alerts.yml:/etc/prometheus/alerts.yml:ro
+      - prometheus_data:/prometheus
+    ports:
+      - "127.0.0.1:9090:9090"
+    restart: unless-stopped
+
+volumes:
+  mysql_data:
+  rabbitmq_data:
+  redis_data:
+  runtime_evidence:
+  report_exports:
+  prometheus_data:

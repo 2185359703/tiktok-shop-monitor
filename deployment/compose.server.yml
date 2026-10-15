@@ -1,0 +1,160 @@
+name: tiktok-shop-monitor
+
+x-app: &app
+  image: tiktok-shop-monitor:server
+  build:
+    context: ..
+  environment:
+    DATABASE_URL: ${DATABASE_URL:?Set DATABASE_URL}
+    RABBITMQ_URL: ${RABBITMQ_URL:?Set RABBITMQ_URL}
+    REDIS_URL: redis://redis:6379/0
+    API_TOKEN: ${API_TOKEN:?Set API_TOKEN}
+    DETAIL_PROXY_URL: http://host.docker.internal:17880
+    SETTINGS_FILE: /opt/tiktok-shop-monitor/configs/server.toml
+    API_HOST: 0.0.0.0
+    DB_POOL_SIZE: 3
+    DB_MAX_OVERFLOW: 2
+  restart: unless-stopped
+  extra_hosts: ["host.docker.internal:host-gateway"]
+  stop_grace_period: 40s
+  logging:
+    driver: json-file
+    options:
+      max-size: "5m"
+      max-file: "2"
+
+services:
+  detail-egress:
+    image: tiktok-shop-monitor:server
+    command: ["socat", "TCP-LISTEN:17880,bind=172.17.0.1,reuseaddr,fork", "TCP:127.0.0.1:17879"]
+    network_mode: host
+    mem_limit: 64m
+    restart: unless-stopped
+    logging: {driver: json-file, options: {max-size: "5m", max-file: "2"}}
+
+  mysql:
+    image: mysql:8.0.43
+    environment:
+      MYSQL_DATABASE: tiktok_shop_monitor
+      MYSQL_USER: tiktok_monitor
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:?Set MYSQL_PASSWORD}
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:?Set MYSQL_ROOT_PASSWORD}
+    command: ["--character-set-server=utf8mb4", "--collation-server=utf8mb4_0900_ai_ci", "--default-time-zone=+00:00", "--innodb-buffer-pool-size=134217728", "--max-connections=70", "--performance-schema=OFF", "--skip-log-bin"]
+    mem_limit: 640m
+    volumes: ["mysql_data:/var/lib/mysql"]
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 --silent"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+    restart: unless-stopped
+    logging: {driver: json-file, options: {max-size: "5m", max-file: "2"}}
+
+  rabbitmq:
+    image: rabbitmq:4.1-management
+    environment:
+      RABBITMQ_DEFAULT_USER: tiktok_monitor
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD:?Set RABBITMQ_PASSWORD}
+      RABBITMQ_SERVER_ADDITIONAL_ERL_ARGS: "-rabbit vm_memory_high_watermark {absolute,167772160} -rabbit disk_free_limit {absolute,134217728}"
+    mem_limit: 320m
+    ports: ["127.0.0.1:15672:15672"]
+    volumes: ["rabbitmq_data:/var/lib/rabbitmq"]
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 10s
+      timeout: 10s
+      retries: 12
+    restart: unless-stopped
+    logging: {driver: json-file, options: {max-size: "5m", max-file: "2"}}
+
+  redis:
+    image: redis:7.4-alpine
+    command: ["redis-server", "--appendonly", "yes", "--maxmemory", "64mb", "--maxmemory-policy", "noeviction"]
+    mem_limit: 128m
+    volumes: ["redis_data:/data"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+    logging: {driver: json-file, options: {max-size: "5m", max-file: "2"}}
+
+  schema-init:
+    <<: *app
+    command: ["python", "-m", "app.storage.schema"]
+    mem_limit: 192m
+    depends_on:
+      mysql: {condition: service_healthy}
+    restart: "no"
+
+  api:
+    <<: *app
+    command: ["python", "-m", "scripts.run_api"]
+    mem_limit: 384m
+    ports: ["127.0.0.1:8000:8000"]
+    volumes:
+      - report_exports:/opt/tiktok-shop-monitor/data/exports/reports:ro
+      - collection_state:/opt/tiktok-shop-monitor/data/collections:ro
+    depends_on:
+      schema-init: {condition: service_completed_successfully}
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health/ready', timeout=3)"]
+      interval: 15s
+      timeout: 5s
+      retries: 6
+
+  scheduler:
+    <<: *app
+    command: ["python", "-m", "scripts.run_scheduler"]
+    mem_limit: 192m
+    depends_on:
+      schema-init: {condition: service_completed_successfully}
+      rabbitmq: {condition: service_healthy}
+      redis: {condition: service_healthy}
+
+  worker:
+    <<: *app
+    command: ["python", "-m", "scripts.run_worker"]
+    mem_limit: 320m
+    volumes:
+      - runtime_evidence:/opt/tiktok-shop-monitor/data/samples/runtime
+      - report_exports:/opt/tiktok-shop-monitor/data/exports/reports
+    depends_on:
+      schema-init: {condition: service_completed_successfully}
+      rabbitmq: {condition: service_healthy}
+      redis: {condition: service_healthy}
+      detail-egress: {condition: service_started}
+
+  collection:
+    <<: *app
+    command: ["python", "-m", "scripts.run_collection"]
+    mem_limit: 256m
+    volumes:
+      - collection_state:/opt/tiktok-shop-monitor/data/collections
+    depends_on:
+      schema-init: {condition: service_completed_successfully}
+      rabbitmq: {condition: service_healthy}
+      redis: {condition: service_healthy}
+    restart: on-failure
+
+  prometheus:
+    image: prom/prometheus:v3.5.0
+    command: ["--config.file=/etc/prometheus/prometheus.yml", "--storage.tsdb.retention.time=2d", "--storage.tsdb.retention.size=64MB"]
+    mem_limit: 192m
+    volumes:
+      - ../monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ../monitoring/alerts.yml:/etc/prometheus/alerts.yml:ro
+      - prometheus_data:/prometheus
+    ports: ["127.0.0.1:9090:9090"]
+    restart: unless-stopped
+    logging: {driver: json-file, options: {max-size: "5m", max-file: "2"}}
+
+volumes:
+  mysql_data:
+  rabbitmq_data:
+  redis_data:
+  runtime_evidence:
+  report_exports:
+  collection_state:
+  prometheus_data:

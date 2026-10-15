@@ -1,0 +1,45 @@
+# 非敏感配置；数据库、消息队列密码和 API Token 只放在本地 env 文件。
+[scope]
+platform = "tiktok_shop"
+region = "US"
+currency = "USD"
+pricing_context = "public_listed"
+
+[runtime]
+# 已实现店铺、商品、详情、快照、变化检测与报表；默认不自动执行。
+enabled_task_types = []
+lease_seconds = 120
+heartbeat_seconds = 15
+poll_seconds = 5
+dispatch_batch_size = 100
+dispatch_scan_limit = 1000
+publish_dedup_seconds = 30
+retry_base_seconds = 10
+retry_max_seconds = 300
+product_discovery_max_pages = 50
+snapshot_interval_seconds = 3600
+periodic_snapshots_enabled = false
+# 平台商品 ID 字符串；周期监测只扫描这份显式名单。
+monitored_product_ids = []
+
+[queue]
+exchange = "tiktok_shop.tasks"
+queue_prefix = "tiktok_shop"
+dead_letter_exchange = "tiktok_shop.dead"
+dead_letter_queue = "tiktok_shop.dead_letter"
+prefetch = 1
+
+[request]
+# 同一市场所有 Worker 共享一个请求闸门，重定向也占用额度。
+minimum_interval_seconds = 2.0
+access_pause_seconds = 900
+evidence_directory = "data/samples/runtime"
+
+[server]
+host = "127.0.0.1"
+port = 8000
+worker_metrics_port = 8001
+scheduler_metrics_port = 8002
+
+[report]
+report_directory = "data/exports/reports"

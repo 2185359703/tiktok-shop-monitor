@@ -1,0 +1,17 @@
+groups:
+  - name: crawler-runtime
+    rules:
+      - alert: RuntimeEndpointDown
+        expr: up{job=~"control-api|scheduler|worker"} == 0
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "采集运行组件不可访问"
+      - alert: DeadTasksPresent
+        expr: sum(crawl_db_tasks{job="control-api",status="dead"}) > 0
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "存在失败耗尽或不可自动处理的任务"

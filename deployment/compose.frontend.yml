@@ -1,0 +1,6 @@
+# Versioned frontend/API rollout; the collection runtime keeps its existing tag.
+services:
+  api:
+    image: tiktok-shop-monitor:frontend-20261015t073634z-608d3d90
+  worker:
+    image: tiktok-shop-monitor:frontend-20261015t073634z-608d3d90

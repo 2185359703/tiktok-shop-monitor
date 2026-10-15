@@ -1,0 +1,17 @@
+# Apply an audited compatibility fix without deploying unrelated local changes.
+# The build log records the existing server image used as the base.
+ARG BASE_IMAGE=tiktok-shop-monitor:server
+FROM ${BASE_IMAGE}
+COPY --chown=monitor:monitor app/services/collection_service.py ./app/services/collection_service.py
+COPY --chown=monitor:monitor app/crawlers/product_detail.py ./app/crawlers/product_detail.py
+COPY --chown=monitor:monitor app/reports/summary.py ./app/reports/summary.py
+COPY --chown=monitor:monitor app/reports/exporter.py ./app/reports/exporter.py
+COPY --chown=monitor:monitor app/reports/cache.py ./app/reports/cache.py
+COPY --chown=monitor:monitor app/api/routes_reports.py ./app/api/routes_reports.py
+COPY --chown=monitor:monitor app/settings.py ./app/settings.py
+COPY --chown=monitor:monitor app/services/scheduler.py ./app/services/scheduler.py
+COPY --chown=monitor:monitor app/queue/rabbitmq.py ./app/queue/rabbitmq.py
+COPY --chown=monitor:monitor app/workers/handlers.py app/workers/runtime.py app/workers/contracts.py ./app/workers/
+COPY --chown=monitor:monitor configs/server.toml ./configs/server.toml
+COPY --chown=monitor:monitor scripts/inspect_server_failures.py scripts/profile_collection.py scripts/profile_report.py scripts/probe_detail_shape.py scripts/retry_compatibility_failures.py ./scripts/
+COPY --chown=monitor:monitor scripts/check_server_state.py scripts/check_detail_compat.py ./scripts/
