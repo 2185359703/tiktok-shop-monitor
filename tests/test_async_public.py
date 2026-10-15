@@ -40,3 +40,25 @@ def test_redirect_outside_public_scope_is_rejected_before_following():
                 await client.fetch(REVIEW_URL, kind='detail', expected_shop_id=SID)
         assert len(requests) == 1
     asyncio.run(run())
+
+
+def test_detail_proxy_does_not_change_store_or_listing_transport(monkeypatch):
+    from app.crawlers.async_public import AsyncTikTokShopAdapter
+    from app.settings import Settings
+    seen = []
+    class Client:
+        def __init__(self, **kwargs): seen.append(kwargs)
+        async def __aenter__(self): return self
+        async def __aexit__(self, *args): pass
+        async def fetch(self, *args, **kwargs): return kwargs['kind']
+    class Gate:
+        async def wait_turn(self): pass
+    monkeypatch.setattr('app.crawlers.async_public.AsyncPublicClient', Client)
+    async def run():
+        adapter = AsyncTikTokShopAdapter(Gate(), Settings(detail_http_backend='curl_cffi',
+                                                         detail_proxy_url='http://proxy.invalid:8080'))
+        for kind in ('shops', 'profile', 'products', 'detail'):
+            assert await adapter.request(URL, kind) == kind
+        assert all(row['proxy'] is None and row['backend'] == 'httpx' for row in seen[:3])
+        assert seen[3]['proxy'] == 'http://proxy.invalid:8080' and seen[3]['backend'] == 'curl_cffi'
+    asyncio.run(run())

@@ -74,7 +74,7 @@ class AsyncTikTokShopAdapter:
     async def request(self, source_url, kind, **kwargs):
         async with AsyncPublicClient(before_request=self.gate.wait_turn,
             backend=self.settings.detail_http_backend if kind == "detail" else "httpx",
-            proxy=self.settings.detail_proxy_url) as client:
+            proxy=self.settings.detail_proxy_url if kind == "detail" else None) as client:
             return await client.fetch(source_url, kind=kind, **kwargs)
 
     async def discover_shops(self, source_url, stop=None):
