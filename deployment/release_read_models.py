@@ -62,8 +62,9 @@ class Release:
         result = subprocess.run(argv, cwd=self.root, env=self.environment, capture_output=True, text=True, timeout=timeout)
         if result.returncode:
             log = self.evidence / "last-command-error.txt"
-            log.write_text(result.stderr, encoding="utf-8")
+            log.touch(mode=0o600, exist_ok=True)
             log.chmod(0o600)
+            log.write_text(result.stderr, encoding="utf-8")
             raise RuntimeError(f"Command failed ({argv[0]}); see protected release log")
         return result.stdout.strip()
 
@@ -128,8 +129,11 @@ class Release:
 
     def backup_schema_and_control(self, mysql):
         path = self.evidence / "schema-and-control.sql.gz"
+        if path.exists():
+            path = self.evidence / f"schema-and-control-{time.time_ns()}.sql.gz"
         shell = 'MYSQL_PWD="$MYSQL_ROOT_PASSWORD" exec mysqldump --user=root --single-transaction --quick --skip-lock-tables --column-statistics=0 '
-        with gzip.open(path, "wb") as output:
+        descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        with os.fdopen(descriptor, "wb") as stream, gzip.GzipFile(fileobj=stream, mode="wb") as output:
             for suffix in ("--no-data tiktok_shop_monitor", "--no-create-info tiktok_shop_monitor shops crawl_tasks"):
                 process = subprocess.Popen(["docker", "exec", mysql["Id"], "sh", "-c", shell + suffix], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
                 shutil.copyfileobj(process.stdout, output)
