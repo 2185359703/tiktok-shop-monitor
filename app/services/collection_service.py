@@ -5,6 +5,7 @@ from collections import Counter, defaultdict
 from sqlalchemy import and_, case, func, select
 
 from app.models import CrawlTask, Product, ProductSnapshot, ProductVariant, ResourceType, SeedShopObservation, Shop, ShopSeedLink, TaskStatus, TaskType
+from app.services.image_backfill import BACKFILL_MODES, capture_mode_expression
 
 
 ACTIVE = {TaskStatus.PENDING, TaskStatus.RUNNING, TaskStatus.RETRY_WAITING, TaskStatus.ABANDONED}
@@ -29,7 +30,7 @@ def owned_task_queries(seed_ids, shop_ids):
             CrawlTask.resource_type == ResourceType.PRODUCT,
             CrawlTask.resource_id == func.cast(Product.id, CrawlTask.resource_id.type),
             *market,
-        )).where(Product.shop_id.in_(shop_ids), CrawlTask.task_type.in_((
+        )).where(Product.shop_id.in_(shop_ids), capture_mode_expression().not_in(BACKFILL_MODES), CrawlTask.task_type.in_((
             TaskType.PRODUCT_DETAIL, TaskType.PRODUCT_SNAPSHOT, TaskType.CHANGE_DETECTION))),
     )
 

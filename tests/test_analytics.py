@@ -15,7 +15,10 @@ from sqlalchemy.types import TypeDecorator
 from app.api.routes_analytics import router
 from app.models import Base, ChangeEvent, Product, ProductSnapshot, ProductVariant, Shop
 from app.models.product_image import ProductImage
-from app.services.analytics_service import build_workbench, list_analytics_products
+from app.services.analytics_service import (
+    aggregate_current_variants, build_workbench, color_size_matrix, filters, list_analytics_products,
+    matrix_from_counts, shop_variant_aggregation, workbench_variant_query,
+)
 from app.settings import Settings
 
 
@@ -112,7 +115,7 @@ def test_workbench_counts_every_scoped_product_and_preserves_unknowns(analytics_
     assert by_key(result["discount_buckets"], "key")["unknown"]["count"] == 2
     assert by_key(result["collection_quality"]["field_coverage"], "field")["rating"]["coverage_pct"] == "50.00"
     assert by_key(result["collection_quality"]["field_coverage"], "field")["style"]["known_count"] == 0
-    assert result["coverage"]["aggregation"] == "sql_full_scope"
+    assert result["coverage"]["aggregation"] == "full_scope"
 
 
 def test_medians_attributes_and_sku_stock_do_not_count_retained_or_duplicate_rows(analytics_db):
@@ -146,6 +149,49 @@ def test_filters_apply_to_all_widgets_and_literal_search(analytics_db):
     assert build_workbench(analytics_db, Settings(), as_of=NOW, q="%") ["summary"]["products"] == 0
     assert build_workbench(analytics_db, Settings(), as_of=NOW, q="Alpha")["summary"]["products"] == 2
     assert build_workbench(analytics_db, Settings(), as_of=NOW, q="Brand B")["summary"]["products"] == 1
+
+
+def test_batched_skus_preserve_exact_membership_and_filter_scope(analytics_db):
+    product = analytics_db.get(Product, 1)
+    product.raw_attributes = {"observed_sku_ids": ["sku1", "sku1", "sku2", 1, None, False, "sku3 "]}
+    analytics_db.flush()
+    clauses, scope = filters(Settings(), session=analytics_db)
+    shops, cells = aggregate_current_variants(analytics_db, clauses, scope["currency"], batch_size=1)
+    assert dict(shops[1]) == {"total": 2, "known": 2, "out_of_stock": 1}
+    expected = build_workbench(analytics_db, Settings(), as_of=NOW)["color_size_matrix"]
+    assert matrix_from_counts(cells, 2) == expected
+    clauses, scope = filters(Settings(), session=analytics_db, shop_id=2)
+    assert aggregate_current_variants(analytics_db, clauses, scope["currency"], batch_size=1) == ({}, {})
+
+
+def test_selective_high_id_store_does_not_page_through_unrelated_catalog(analytics_db):
+    unrelated = [{"id": identifier, "shop_id": 1, "platform": "tiktok_shop", "region": "US",
+        "platform_product_id": f"unrelated-{identifier}", "product_url": "https://shop.tiktok.com/p/fixture",
+        "title": "Unrelated", "currency": "USD", "pricing_context": "public_listed",
+        "created_at": NOW, "updated_at": NOW, "first_seen_at": NOW, "last_seen_at": NOW}
+        for identifier in range(100, 700)]
+    analytics_db.execute(Product.__table__.insert(), unrelated)
+    analytics_db.add(Product(id=99999, shop_id=2, platform="tiktok_shop", region="US",
+        platform_product_id="late-target", product_url="https://shop.tiktok.com/p/fixture",
+        title="Late scope item", currency="USD", pricing_context="public_listed",
+        raw_attributes={"observed_sku_ids": ["late-sku"]}, created_at=NOW, updated_at=NOW,
+        first_seen_at=NOW, last_seen_at=NOW))
+    analytics_db.flush()
+    analytics_db.add(ProductVariant(id=1000, product_id=99999, platform_variant_id="late-sku", variant_key="e" * 64,
+        currency="USD", color="Black", size="M", stock_status="in_stock", created_at=NOW, updated_at=NOW))
+    analytics_db.commit()
+    statements = []
+    def capture(conn, cursor, statement, parameters, context, executemany):
+        if statement.lstrip().upper().startswith("SELECT"):
+            statements.append(statement)
+    event.listen(analytics_db.bind, "before_cursor_execute", capture)
+    try:
+        clauses, scope = filters(Settings(), session=analytics_db, shop_id=2)
+        shops, _ = aggregate_current_variants(analytics_db, clauses, scope["currency"])
+    finally:
+        event.remove(analytics_db.bind, "before_cursor_execute", capture)
+    assert dict(shops[2]) == {"total": 1, "known": 1, "out_of_stock": 0}
+    assert len(statements) <= 6
     assert build_workbench(analytics_db, Settings(), as_of=NOW, currency="eur")["summary"]["products"] == 1
 
 
@@ -336,3 +382,104 @@ def test_server_sorts_with_stable_pagination_and_unknown_details_last(analytics_
     second = list_analytics_products(analytics_db, Settings(), sort=sort, page_size=2, page=2)
     assert [row["id"] for row in first["items"] + second["items"]] == expected
     assert by_key(first["items"] + second["items"], "id")["4"]["variant_count"] is None
+
+
+@pytest.mark.parametrize("observed", [False, True])
+def test_sku_summary_keeps_empty_sets_and_unknown_stock_explicit(analytics_db, observed):
+    product = analytics_db.get(Product, 1)
+    if not observed:
+        product.raw_attributes = {"observed_sku_ids": []}
+    else:
+        for identifier in (1, 2):
+            variant = analytics_db.get(ProductVariant, identifier)
+            variant.stock_status = "unknown" if identifier == 1 else "partial"
+            variant.color = variant.size = None
+    analytics_db.commit()
+    result = build_workbench(analytics_db, Settings(), as_of=NOW)
+    total = 2 if observed else 0
+    assert result["summary"]["variants"] == total
+    assert result["summary"]["known_stock_variants"] == 0
+    assert result["summary"]["out_of_stock_variants"] == 0
+    assert result["summary"]["sku_stockout_pct"] is None
+    matrix = result["color_size_matrix"]
+    assert matrix["total_variants"] == matrix["missing_attributes_variants"] == total
+    assert matrix["eligible_variants"] == matrix["shown_variants"] == 0
+    assert matrix["colors"] == matrix["sizes"] == matrix["cells"] == []
+
+
+def test_global_sku_totals_include_shops_beyond_display_limit(analytics_db, monkeypatch):
+    monkeypatch.setattr("app.services.analytics_service.SHOP_LIMIT", 1)
+    analytics_db.get(Product, 3).raw_attributes = {"observed_sku_ids": ["beta-sku", "beta-sku"]}
+    analytics_db.add(ProductVariant(id=10, product_id=3, platform_variant_id="beta-sku", variant_key="a" * 64,
+                     currency="USD", stock_status="out_of_stock", price=Decimal("30.01"), color="Blue", size="L",
+                     created_at=NOW, updated_at=NOW))
+    analytics_db.commit()
+    result = build_workbench(analytics_db, Settings(), as_of=NOW)
+    assert result["coverage"]["shops_truncated"] and len(result["shops"]) == 1
+    assert result["shops"][0]["id"] == "1" and result["shops"][0]["variant_count"] == 2
+    assert result["summary"]["variants"] == result["summary"]["known_stock_variants"] == 3
+    assert result["summary"]["out_of_stock_variants"] == 2
+    assert result["summary"]["sku_stockout_pct"] == "66.67"
+    assert result["color_size_matrix"]["total_variants"] == 3
+
+
+def test_matrix_eligible_count_precedes_color_and_size_display_limits(analytics_db):
+    combinations = [(f"Color {color:02d}", f"Size {size:02d}") for color in range(14) for size in range(11)]
+    combinations += [(None, "Size 00"), ("Color 00", None)]
+    sku_ids = []
+    for identifier, (color, size) in enumerate(combinations, start=100):
+        sku_id = f"matrix-{identifier}"
+        sku_ids.append(sku_id)
+        analytics_db.add(ProductVariant(id=identifier, product_id=1, platform_variant_id=sku_id,
+                         variant_key=f"{identifier:064x}", currency="USD", stock_status="unknown",
+                         color=color, size=size, created_at=NOW, updated_at=NOW))
+    analytics_db.get(Product, 1).raw_attributes = {"observed_sku_ids": [*sku_ids, sku_ids[0]]}
+    analytics_db.commit()
+    result = build_workbench(analytics_db, Settings(), as_of=NOW)
+    matrix = result["color_size_matrix"]
+    assert result["summary"]["variants"] == matrix["total_variants"] == 156
+    assert matrix["eligible_variants"] == 154 and matrix["missing_attributes_variants"] == 2
+    assert len(matrix["colors"]) == 12 and len(matrix["sizes"]) == 10
+    assert matrix["shown_variants"] == len(matrix["cells"]) == 120
+    assert matrix["truncated"] is True
+    assert all(cell["unknown"] == cell["count"] == 1 for cell in matrix["cells"])
+
+
+@pytest.mark.parametrize("identifiers, expected", [
+    (["sku1", "sku1", "sku2", 1, False, None, ["sku3"], {"id": "sku3"}], 2),
+    (["SKU1", "sku1 ", "sku1" + "x" * 129, 1], 0),
+    ("sku2", 1), (None, 0), ({"id": "sku1"}, 0), ([], 0),
+])
+def test_sql_and_batched_membership_have_the_same_typed_set_semantics(analytics_db, identifiers, expected):
+    analytics_db.get(Product, 1).raw_attributes = {"observed_sku_ids": identifiers}
+    analytics_db.flush()
+    clauses, scope = filters(Settings(), session=analytics_db)
+    shops, cells = aggregate_current_variants(analytics_db, clauses, scope["currency"], batch_size=1)
+    assert sum(counts["total"] for counts in shops.values()) == expected
+    with workbench_variant_query(analytics_db, clauses, scope["currency"]) as query:
+        rows = analytics_db.execute(shop_variant_aggregation(query)).all()
+        assert sum(row[1] for row in rows) == expected
+        assert matrix_from_counts(cells, expected) == color_size_matrix(analytics_db, query, expected)
+
+
+def test_matrix_preserves_source_case_accents_tabs_and_actual_combinations(analytics_db):
+    labels = [(" Black ", " M "), ("black", "M"), ("Café", "L"), ("Cafe", "L"), ("\t", " S "), ("  ", "M")]
+    identifiers = []
+    for identifier, (color, size) in enumerate(labels, start=100):
+        sku = f"label-{identifier}"
+        identifiers.append(sku)
+        analytics_db.add(ProductVariant(id=identifier, product_id=1, platform_variant_id=sku,
+            variant_key=f"{identifier:064x}", currency="USD", color=color, size=size,
+            stock_status="partial" if identifier == 100 else "unknown", created_at=NOW, updated_at=NOW))
+    analytics_db.get(Product, 1).raw_attributes = {"observed_sku_ids": identifiers}
+    analytics_db.flush()
+    clauses, scope = filters(Settings(), session=analytics_db)
+    shops, counts = aggregate_current_variants(analytics_db, clauses, scope["currency"], batch_size=1)
+    matrix = matrix_from_counts(counts, 6)
+    assert matrix["total_variants"] == 6 and matrix["eligible_variants"] == 5
+    assert set(matrix["colors"]) == {"Black", "black", "Café", "Cafe", "\t"}
+    assert {(cell["color"], cell["size"]) for cell in matrix["cells"]} == {
+        ("Black", "M"), ("black", "M"), ("Café", "L"), ("Cafe", "L"), ("\t", "S")}
+    assert all(cell["count"] == cell["unknown"] == 1 for cell in matrix["cells"])
+    with workbench_variant_query(analytics_db, clauses, scope["currency"]) as query:
+        assert color_size_matrix(analytics_db, query, 6) == matrix

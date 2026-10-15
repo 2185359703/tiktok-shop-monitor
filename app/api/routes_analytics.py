@@ -1,14 +1,17 @@
 """Analytics routes read existing observations without triggering collection."""
 
 from decimal import Decimal
+from threading import Lock
 from typing import Annotated, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 
 from app.services.analytics_service import build_workbench, list_analytics_products
+from app.reports.cache import ReportCache
 
 
 router = APIRouter(prefix="/api/v1/analytics", tags=["analytics"])
+_cache_creation_lock = Lock()
 
 
 def analytics_filters(
@@ -37,8 +40,18 @@ def analytics_filters(
 @router.get("/workbench")
 def workbench(request: Request, options: Annotated[dict, Depends(analytics_filters)],
               lookback_hours: Annotated[int, Query(ge=1, le=720)] = 24):
-    with request.app.state.factory() as db:
-        return build_workbench(db, request.app.state.settings, lookback_hours=lookback_hours, **options)
+    with _cache_creation_lock:
+        if not hasattr(request.app.state, "workbench_cache"):
+            request.app.state.workbench_cache = ReportCache(ttl_seconds=30)
+        cache = request.app.state.workbench_cache
+    config = request.app.state.settings
+    normalized = {**options, "q": (options.get("q") or "").strip() or None,
+                  "currency": (options.get("currency") or config.currency).upper()}
+    key = (config.platform, config.region, config.pricing_context, lookback_hours, tuple(sorted(normalized.items())))
+    def build():
+        with request.app.state.factory() as db:
+            return build_workbench(db, config, lookback_hours=lookback_hours, **options)
+    return cache.get_or_build(key, build)
 
 
 @router.get("/products")

@@ -16,6 +16,9 @@ from app.services.snapshot_service import persist_snapshot
 from app.services.change_detector import detect_snapshot_changes
 from app.reports.summary import build_monitoring_report
 from app.reports.exporter import export_report
+from app.crawlers.product_images import IMAGE_SOURCE_VERSION
+from app.crawlers.product_content import CONTENT_SOURCE_VERSION
+from app.services.image_backfill import BACKFILL_MODES, MEDIA_MODE, image_capture_state, persist_image_observation, save_image_evidence
 
 
 def pause_access_scope(context, status):
@@ -63,6 +66,8 @@ class ShopDiscoveryHandler:
                                request_url=snapshot.final_url, response_status=snapshot.status,
                                response_bytes=snapshot.response_bytes, response_hash=snapshot.response_hash,
                                latency_ms=snapshot.latency_ms, evidence_path=str(path))
+
+
 
 
 class ProductDiscoveryHandler:
@@ -133,6 +138,22 @@ class ProductDetailHandler:
                     or payload.get("pricing_context", "public_listed") != "public_listed"):
                 raise TaskFailure(Failure("invalid_detail_task_payload", "详情链接身份或价格上下文不一致。"))
             expected_shop_id = identifier(payload["platform_shop_id"])
+            mode = payload.get("capture_mode", "full")
+            if mode not in {"full", *BACKFILL_MODES} or mode in BACKFILL_MODES and (
+                    self.task_type != TaskType.PRODUCT_DETAIL or payload.get("image_source_version") != IMAGE_SOURCE_VERSION
+                    or mode == MEDIA_MODE and payload.get("content_source_version") != CONTENT_SOURCE_VERSION):
+                raise TaskFailure(Failure("invalid_capture_mode", "详情采集模式或图片解析版本不正确。"))
+            if mode in BACKFILL_MODES:
+                if context.session_factory is None:
+                    raise TaskFailure(Failure("image_session_unavailable", "图片补采需要显式会话工厂。"))
+                with context.session_factory() as db:
+                    available = image_capture_state(db, int(lease.resource_id), payload, lease.platform, lease.region)
+                if available:
+                    def skip(session, task):
+                        if not image_capture_state(session, int(task.resource_id), task.payload, task.platform, task.region):
+                            raise TaskFailure(Failure("image_skip_state_changed", "图库在跳过确认前变化，等待重试。", True))
+                    return ExecutionResult(apply=skip, checkpoint={"capture_mode": mode,
+                        "image_source_version": IMAGE_SOURCE_VERSION, "outcome": "skipped_already_available", "images_upserted": 0})
             snapshot = TikTokShopAdapter(context.gate, context.settings).fetch_product_detail(source, expected_shop_id, context.stop)
         except (KeyError, TypeError, ValueError, AttributeError):
             raise TaskFailure(Failure("invalid_detail_task_payload", "详情任务参数校验失败。")) from None
@@ -147,11 +168,13 @@ class ProductDetailHandler:
                                           context.settings.access_pause_seconds, error.status, **evidence)) from None
             raise TaskFailure(Failure(error.code, "公开详情或 SKU 校验失败。", error.retryable,
                                       response_status=error.status, **evidence)) from None
-        path = snapshot.save_evidence(context.settings.evidence_directory / lease.task_id)
+        path = (save_image_evidence(snapshot, context.settings.evidence_directory / lease.task_id, capture_mode=mode) if mode in BACKFILL_MODES
+                else snapshot.save_evidence(context.settings.evidence_directory / lease.task_id))
         checkpoint = {"evidence_path": str(path), "response_hash": snapshot.response_hash}
 
         def apply(session, task):
-            checkpoint.update(self.commit_observation(session, task, snapshot, context))
+            checkpoint.update(persist_image_observation(session, task, snapshot) if mode in BACKFILL_MODES
+                              else self.commit_observation(session, task, snapshot, context))
 
         return ExecutionResult(apply=apply, checkpoint=checkpoint, request_url=snapshot.final_url,
                                response_status=snapshot.status, response_bytes=snapshot.response_bytes,

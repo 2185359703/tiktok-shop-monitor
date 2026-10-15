@@ -67,6 +67,30 @@ def test_oversized_optional_attributes_keep_original_evidence_and_do_not_discard
     assert next(record for record in detail.raw_attributes["specifications"] if record["name"] == "Style")["value"] == long_style
 
 
+def test_unrecognized_optional_description_keeps_valid_prices_and_skus():
+    value = block()
+    value["product_info"]["desc_blocks"] = [{"type": "text", "text": {"unknown": "merchant schema"}}]
+    detail = parse_detail_block(value, URL, SID)
+    assert detail.price_min == Decimal("81.89") and len(detail.variants) == 2
+    assert detail.description is None and detail.raw_attributes["unsupported_description_blocks"]
+    assert detail.content.completeness == "partial"
+
+
+@pytest.mark.parametrize("retain_source", [True, False])
+def test_invalid_optional_content_cannot_discard_older_sku_evidence(tmp_path, retain_source):
+    page = snapshot()
+    record = json.loads(page.save_evidence(tmp_path).read_text(encoding="utf-8"))
+    record["detail"]["content"] = {"source_version": "forged", "sections": []}
+    if not retain_source:
+        record["detail"].pop("content_source", None)
+    restored = DetailSnapshot.from_evidence(record)
+    assert restored.detail.price_min == page.detail.price_min
+    assert restored.detail.variants == page.detail.variants
+    assert (restored.detail.content is not None) is retain_source
+    if retain_source:
+        assert restored.detail.content.sections == page.detail.content.sections
+
+
 def test_sampled_general_size_label_keeps_exact_property_ids_and_values():
     value = block()
     value["product_info"]["sale_props"][1]["prop_name"] = "Size(General size)"

@@ -216,6 +216,36 @@ def test_scheduler_publishes_only_remaining_queue_capacity(runtime_db):
     assert result["published"] == len(broker.messages) == 3
 
 
+def test_images_and_full_details_share_watermark_and_rotate_tiny_budgets(runtime_db):
+    factory, new_task = runtime_db
+    full_id = new_task(TaskType.PRODUCT_DETAIL)
+    image_id = new_task(TaskType.PRODUCT_DETAIL)
+    with session_scope(factory) as db:
+        db.scalar(select(CrawlTask).where(CrawlTask.task_id == image_id)).payload = {"capture_mode": "images_only"}
+    config = replace(CONFIG, enabled_task_types=(TaskType.PRODUCT_DETAIL,), image_backfill_enabled=True,
+                     dispatch_batch_size=1)
+    broker = WatermarkBroker({TaskType.PRODUCT_DETAIL: 62})
+    scheduler = Scheduler(config, factory, broker, PublishGate(), Metrics())
+    assert scheduler.dispatch_once()["published"] == 1
+    assert scheduler.dispatch_once()["published"] == 1
+    assert [message.task_id for message in broker.messages] == [full_id, image_id]
+    assert broker.ready_count(TaskType.PRODUCT_DETAIL) == 64
+    assert scheduler.dispatch_once()["published"] == 0
+
+
+def test_image_dispatch_is_opt_in_and_empty_full_lane_yields_its_budget(runtime_db):
+    factory, new_task = runtime_db
+    for _ in range(5):
+        identifier = new_task(TaskType.PRODUCT_DETAIL)
+        with session_scope(factory) as db:
+            db.scalar(select(CrawlTask).where(CrawlTask.task_id == identifier)).payload = {"capture_mode": "images_only"}
+    config = replace(CONFIG, enabled_task_types=(TaskType.PRODUCT_DETAIL,), dispatch_batch_size=4)
+    broker = WatermarkBroker()
+    assert Scheduler(config, factory, broker, PublishGate(), Metrics()).dispatch_once()["published"] == 0
+    enabled = replace(config, image_backfill_enabled=True)
+    assert Scheduler(enabled, factory, broker, PublishGate(), Metrics()).dispatch_once()["published"] == 4
+
+
 def test_global_scan_budget_includes_dedup_skips_but_next_type_gets_a_turn(runtime_db):
     factory, new_task = runtime_db
     first_id = new_task(TaskType.PRODUCT_DETAIL)

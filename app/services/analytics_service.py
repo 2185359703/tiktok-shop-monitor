@@ -4,11 +4,12 @@ Counts and medians use the complete filtered scope. Only scatter points and
 the number of displayed groups are bounded; their coverage is explicit.
 """
 
-from collections import defaultdict
+from collections import Counter, defaultdict
+from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal, ROUND_HALF_UP
-
-from sqlalchemy import and_, case, exists, func, literal_column, or_, select, true
+from sqlalchemy import and_, case, cast, exists, func, literal_column, or_, select, true
+from sqlalchemy.dialects.mysql import BINARY
 
 from app.models import ChangeEvent, Product, ProductSnapshot, ProductVariant, Shop
 from app.models.product_image import ProductImage
@@ -113,13 +114,61 @@ def json_values(session, column):
 
 
 def current_variant_condition(session):
-    """Retained but absent SKUs are not current observations."""
+    """Exact string membership in the latest observed SKU set.
+
+    Ignore malformed numeric/object/nested-array entries, preserve case and
+    trailing spaces, and count retained SKU rows at most once per observation.
+    A scalar JSON string is also treated as a one-element observed set.
+    """
     if session.bind.dialect.name == "mysql":
-        return func.json_contains(func.json_extract(Product.raw_attributes, "$.observed_sku_ids"),
-                                  func.json_quote(ProductVariant.platform_variant_id)) == 1
-    values = func.json_each(Product.raw_attributes, "$.observed_sku_ids").table_valued("key", "value")
-    return exists(select(1).select_from(values).where(values.c.value == ProductVariant.platform_variant_id)
-                  .correlate(Product, ProductVariant))
+        values = func.json_table(Product.raw_attributes, literal_column(
+            "'$.observed_sku_ids[*]' COLUMNS (raw_sku JSON PATH '$' NULL ON ERROR)"
+        )).table_valued("raw_sku", joins_implicitly=True)
+        match = and_(func.json_type(values.c.raw_sku) == "STRING",
+            cast(func.json_unquote(values.c.raw_sku), BINARY) == cast(ProductVariant.platform_variant_id, BINARY))
+    else:
+        values = func.json_each(Product.raw_attributes, "$.observed_sku_ids").table_valued("key", "value", "type")
+        match = and_(values.c.type == "text", values.c.value.collate("BINARY") == ProductVariant.platform_variant_id)
+    root_type = func.json_type(func.json_extract(Product.raw_attributes, "$.observed_sku_ids")) if session.bind.dialect.name == "mysql" \
+        else func.json_type(Product.raw_attributes, "$.observed_sku_ids")
+    lookup = select(func.count()).select_from(values).where(match).correlate(Product, ProductVariant)
+    # A correlated scalar aggregate also avoids MySQL's incorrect semijoin
+    # decorrelation over JSON_TABLE for mixed string/numeric ID arrays.
+    if session.bind.dialect.name == "mysql":
+        scalar_match = cast(func.json_unquote(func.json_extract(Product.raw_attributes, "$.observed_sku_ids")), BINARY) \
+            == cast(ProductVariant.platform_variant_id, BINARY)
+        return or_(and_(root_type == "STRING", scalar_match), and_(root_type == "ARRAY", lookup.scalar_subquery() > 0))
+    return and_(root_type.in_(["array", "text"]), exists(select(1).select_from(values).where(match)
+        .correlate(Product, ProductVariant)))
+
+
+def observed_variants_query(session, clauses, currency, *columns):
+    """SQL membership query for bounded listings and explicit SKU sorting.
+
+    The workbench uses the batched projection below, so it does not evaluate
+    this JSON predicate repeatedly across every dashboard aggregate.
+    """
+    return products_query(*columns).join(ProductVariant, ProductVariant.product_id == Product.id).where(
+        *clauses, ProductVariant.currency == currency, current_variant_condition(session))
+
+
+@contextmanager
+def workbench_variant_query(session, clauses, currency):
+    """Read-only SQL reference projection retained for the profiler.
+
+    The projection owns no temporary table and has no cleanup side effects.
+    """
+    yield observed_variants_query(session, clauses, currency, ProductVariant.id.label("variant_id"),
+                                  Product.shop_id.label("shop_id"), ProductVariant.color,
+                                  ProductVariant.size, ProductVariant.stock_status)
+
+
+def shop_variant_aggregation(variant_query):
+    """Build a grouped SELECT over projected fields, also usable with EXPLAIN."""
+    columns = variant_query.selected_columns
+    return variant_query.with_only_columns(columns.shop_id, func.count(),
+        sum_if(columns.stock_status.in_(["in_stock", "out_of_stock"])),
+        sum_if(columns.stock_status == "out_of_stock")).group_by(columns.shop_id)
 
 
 def image_coverage(session, clauses, total, *, ready=None):
@@ -129,6 +178,87 @@ def image_coverage(session, clauses, total, *, ready=None):
         ProductImage.is_current.is_(True), nonempty(ProductImage.image_url))) or 0) if ready else None
     return {"field": "image", "label": "真实商品图片", "known_count": known, "total_count": total,
             "coverage_pct": percent(known, total) if known is not None else None, "ready": ready}
+
+
+def aggregate_current_variants(session, clauses, currency, *, batch_size=128):
+    """Read the exact current SKU set with bounded product/SKU projections.
+
+    MySQL evaluates JSON membership for every joined SKU, and JSON_TABLE
+    expansion still performs one secondary-index lookup per identifier. On
+    small collection hosts both are much slower than reading a product's ID
+    array once and applying exact string membership to its projected SKU rows.
+    A scoped ID-only keyset cursor bounds each payload query and avoids walking
+    unrelated stores or markets for a selective request. The separate JSON
+    projection keeps raw payloads out of the ORDER BY/LIMIT phase, without
+    forcing an index. No ORM objects or entire catalog are loaded in memory.
+    """
+    if not 1 <= batch_size <= 1000:
+        raise ValueError("SKU统计批次必须为1-1000个商品。")
+    shops, cells = defaultdict(Counter), Counter()
+    upper = session.scalar(products_query(func.max(Product.id)).where(*clauses))
+    if upper is None:
+        return shops, cells
+    after = 0
+    while True:
+        identifiers = session.scalars(products_query(Product.id).where(*clauses, Product.id > after, Product.id <= upper)
+            .order_by(Product.id).limit(batch_size)).all()
+        if not identifiers:
+            break
+        after = identifiers[-1]
+        products = session.execute(products_query(Product.id, Product.shop_id,
+            Product.raw_attributes["observed_sku_ids"]).where(*clauses, Product.id.in_(identifiers))).all()
+        current = {}
+        for identifier, shop, values in products:
+            # JSON_CONTAINS also treats a scalar JSON string as membership.
+            values = [values] if isinstance(values, str) else values if isinstance(values, list) else []
+            identifiers = {value for value in values if isinstance(value, str)}
+            if identifiers:
+                current[identifier] = (shop, identifiers)
+        if not current:
+            continue
+        rows = session.execute(select(ProductVariant.product_id, ProductVariant.platform_variant_id,
+            ProductVariant.color, ProductVariant.size, ProductVariant.stock_status).where(
+            ProductVariant.product_id.in_(current), ProductVariant.currency == currency)
+            .execution_options(yield_per=1000))
+        try:
+            for identifier, sku, color, size, stock in rows:
+                shop, identifiers = current[identifier]
+                if sku not in identifiers:
+                    continue
+                stock = enum_value(stock)
+                shops[shop]["total"] += 1
+                shops[shop]["known"] += stock in {"in_stock", "out_of_stock"}
+                shops[shop]["out_of_stock"] += stock == "out_of_stock"
+                # SQL TRIM() removes U+0020; retain that same label semantics.
+                color, size = (color or "").strip(" "), (size or "").strip(" ")
+                if color and size:
+                    cells[(color, size, stock)] += 1
+        finally:
+            rows.close()
+    return shops, cells
+
+
+def matrix_from_counts(cells, total):
+    colors, sizes = Counter(), Counter()
+    for (color, size, _), count in cells.items():
+        colors[color] += count
+        sizes[size] += count
+    selected_colors = [key for key, _ in sorted(colors.items(), key=lambda pair: (-pair[1], pair[0]))[:12]]
+    selected_sizes = [key for key, _ in sorted(sizes.items(), key=lambda pair: (-pair[1], pair[0]))[:10]]
+    grouped = defaultdict(Counter)
+    for (color, size, stock), count in cells.items():
+        if color in selected_colors and size in selected_sizes:
+            grouped[(color, size)][stock] += count
+    result = [{"color": color, "size": size, "count": sum(counts.values()),
+               "in_stock": counts["in_stock"], "out_of_stock": counts["out_of_stock"],
+               "unknown": counts["unknown"] + counts["partial"]}
+              for (color, size), counts in sorted(grouped.items())]
+    eligible = sum(cells.values())
+    shown = sum(row["count"] for row in result)
+    return {"colors": selected_colors, "sizes": selected_sizes, "cells": result,
+            "basis": "current_observed_variant", "total_variants": total, "eligible_variants": eligible,
+            "shown_variants": shown, "missing_attributes_variants": total - eligible, "truncated": shown < eligible,
+            "note": "只统计最近详情实际观察到且颜色和尺码均明确的 SKU；空格没有观察组合，不代表缺货。"}
 
 
 def field_coverage(session, clauses, total, *, image_info=None):
@@ -196,6 +326,12 @@ def attribute_distribution(session, clauses, column, total, *, array=False):
 
 
 def build_workbench(session, settings, *, lookback_hours=24, as_of=None, **options):
+    """Read through the caller's transaction without changing its isolation.
+
+    The API creates a fresh Session per cache build. REPEATABLE READ callers
+    retain the same snapshot throughout product and SKU batches; explicit RC
+    callers keep their existing policy. No implicit commit or flush is needed.
+    """
     if not 1 <= lookback_hours <= 720:
         raise ValueError("观察窗口为 1-720 小时。")
     now = as_of or (database_now(session) if session.bind.dialect.name == "mysql" else datetime.now(timezone.utc))
@@ -212,12 +348,13 @@ def build_workbench(session, settings, *, lookback_hours=24, as_of=None, **optio
         total, shops_count, detailed, price_known, stock_known, discount_known, low, high = stats
         total, detailed = int(total), int(detailed)
         overall_median = medians(session, clauses).get("all")
-        variant_query = products_query(ProductVariant.id).join(ProductVariant, ProductVariant.product_id == Product.id).where(
-            *clauses, ProductVariant.currency == scope["currency"], current_variant_condition(session))
-        variant_stats = session.execute(variant_query.with_only_columns(func.count(),
-            sum_if(ProductVariant.stock_status.in_(["in_stock", "out_of_stock"])),
-            sum_if(ProductVariant.stock_status == "out_of_stock"))).one()
-        matrix = color_size_matrix(session, variant_query, int(variant_stats[0]))
+        sku_aggregates, matrix_counts = aggregate_current_variants(session, clauses, scope["currency"])
+        shop_variant_rows = [(shop, counts["total"], counts["known"], counts["out_of_stock"])
+                             for shop, counts in sku_aggregates.items()]
+        # Sum all scoped shops before the separate SHOP_LIMIT presentation cap.
+        variant_stats = tuple(sum(int(row[index]) for row in shop_variant_rows) for index in range(1, 4))
+        matrix = matrix_from_counts(matrix_counts, int(variant_stats[0]))
+        shop_skus = {row[0]: tuple(int(value) for value in row[1:]) for row in shop_variant_rows}
         category = category_expression()
         category_rows = session.execute(products_query(category, func.count(), sum_if(Product.last_success_at.is_not(None)),
             func.count(Product.price_min), func.min(Product.price_min), func.max(Product.price_min)).where(*clauses)
@@ -232,10 +369,6 @@ def build_workbench(session, settings, *, lookback_hours=24, as_of=None, **optio
             func.min(Product.price_min), func.max(Product.price_min)).where(*clauses).group_by(Product.shop_id, Shop.canonical_name)
             .order_by(func.count().desc(), Product.shop_id).limit(SHOP_LIMIT + 1)).all()
         shop_medians = medians(session, clauses, partition=Product.shop_id, groups=[row[0] for row in shop_rows[:SHOP_LIMIT]])
-        shop_variant_rows = session.execute(variant_query.with_only_columns(Product.shop_id, func.count(),
-            sum_if(ProductVariant.stock_status.in_(["in_stock", "out_of_stock"])),
-            sum_if(ProductVariant.stock_status == "out_of_stock")).group_by(Product.shop_id)).all()
-        shop_skus = {row[0]: row[1:] for row in shop_variant_rows}
         shops = []
         for identifier, name, count, details, known, minimum, maximum in shop_rows[:SHOP_LIMIT]:
             variant_count, known_stock, stockout = shop_skus.get(identifier, (0, 0, 0))
@@ -336,36 +469,44 @@ def build_workbench(session, settings, *, lookback_hours=24, as_of=None, **optio
                 "attribute_distributions": attributes, "price_rating_scatter": scatter, "color_size_matrix": matrix,
                 "collection_quality": quality, "history_summary": history,
                 "event_trend_daily": event_trend, "events_by_type": event_types,
-                "coverage": {"products_total": total, "aggregation": "sql_full_scope", "median_sample_limit": None,
+                "coverage": {"products_total": total, "aggregation": "full_scope", "median_sample_limit": None,
                              "median_sample_count": int(price_known), "median_sample_strategy": "full_scope",
                              "categories_truncated": len(category_rows) > GROUP_LIMIT, "shops_truncated": len(shop_rows) > SHOP_LIMIT,
                              "category_group_limit": GROUP_LIMIT, "shop_group_limit": SHOP_LIMIT, "event_date_timezone": "Asia/Shanghai",
                              "image_readiness": image_info["ready"],
-                             "variant_basis": "latest_detail_observed_sku_ids"},
+                             "variant_basis": "latest_detail_observed_sku_ids",
+                             "variant_aggregation": "batched_exact_membership", "matrix_label_comparison": "exact_source_text"},
                 "notes": ["当前分布统计全部符合筛选条件的已采集商品；不代表全店或整个市场。",
                           "价格为公开标价下限，From 起价和价格区间不等于统一单价或成交价；币种与价格上下文严格隔离。",
                           "详情覆盖率以成功详情时间为依据；未知字段保留为空，未知库存和未知折扣单独展示。",
                           "SKU 仅统计最近详情明确出现的 observed_sku_ids；保留但本次未出现的 SKU 不计入当前库存。",
                           "颜色、尺码按商品去重统计，多标签总数可能超过商品数；其他属性使用采集原文，不自动推断。",
+                          "颜色尺码矩阵保留来源标签的大小写和重音差异，只去除首尾普通空格，不合并同名或近似标签。",
                           "趋势来自有效历史快照与实际变化事件；首次发现时间不等于平台上架时间，新发现事件不是销量。",
                           "公开累计销量不用于日销量、收入或成交额估计；评分散点仅展示评分和价格已知的商品。",
                           "观察窗口仅限制变化事件；分布和覆盖率反映当前已采集记录，历史覆盖展示全部有效历史。"]}
 
 
 def color_size_matrix(session, variant_query, total):
-    """A cell represents actual observed SKU combinations, never a cross product."""
-    color, size = func.trim(ProductVariant.color), func.trim(ProductVariant.size)
-    query = variant_query.where(nonempty(ProductVariant.color), nonempty(ProductVariant.size))
-    eligible = int(session.scalar(query.with_only_columns(func.count())) or 0)
-    colors = [value for value, _ in session.execute(query.with_only_columns(color, func.count()).group_by(color)
-              .order_by(func.count().desc(), color).limit(12))]
+    """SQL reference for exact source labels, independent of server collation."""
+    columns = variant_query.selected_columns
+    collation = "utf8mb4_bin" if session.bind.dialect.name == "mysql" else "BINARY"
+    color, size = func.trim(columns.color).collate(collation), func.trim(columns.size).collate(collation)
+    query = variant_query.where(color.is_not(None), color != "", size.is_not(None), size != "")
+    # The window sums all grouped colors before LIMIT selects the displayed
+    # twelve; it also supplies the old separate full-scope eligibility count.
+    color_rows = session.execute(query.with_only_columns(color, func.count(),
+        func.sum(func.count()).over().label("eligible_total")).group_by(color)
+        .order_by(func.count().desc(), color).limit(12)).all()
+    eligible = int(color_rows[0][2]) if color_rows else 0
+    colors = [row[0] for row in color_rows]
     sizes = [value for value, _ in session.execute(query.with_only_columns(size, func.count()).group_by(size)
              .order_by(func.count().desc(), size).limit(10))]
     cells = [{"color": c, "size": s, "count": int(count), "in_stock": int(available),
               "out_of_stock": int(stockout), "unknown": int(other)}
              for c, s, count, available, stockout, other in session.execute(query.with_only_columns(color, size, func.count(),
-                 sum_if(ProductVariant.stock_status == "in_stock"), sum_if(ProductVariant.stock_status == "out_of_stock"),
-                 sum_if(ProductVariant.stock_status.in_(["unknown", "partial"]))).where(color.in_(colors), size.in_(sizes))
+                 sum_if(columns.stock_status == "in_stock"), sum_if(columns.stock_status == "out_of_stock"),
+                 sum_if(columns.stock_status.in_(["unknown", "partial"]))).where(color.in_(colors), size.in_(sizes))
                  .group_by(color, size).order_by(color, size))]
     shown = sum(cell["count"] for cell in cells)
     return {"colors": colors, "sizes": sizes, "cells": cells, "basis": "current_observed_variant",
@@ -391,9 +532,8 @@ def list_analytics_products(session, settings, *, page=1, page_size=24, sort="re
         total = int(session.scalar(products_query(func.count()).where(*clauses)) or 0)
         query = products_query(Product, Shop.canonical_name).where(*clauses)
         if sort.startswith("sku_count_"):
-            sku_counts = products_query(Product.id.label("product_id"), func.count(ProductVariant.id).label("count")).join(
-                ProductVariant, ProductVariant.product_id == Product.id).where(*clauses,
-                ProductVariant.currency == scope["currency"], current_variant_condition(session)).group_by(Product.id).subquery()
+            sku_counts = observed_variants_query(session, clauses, scope["currency"],
+                Product.id.label("product_id"), func.count(ProductVariant.id).label("count")).group_by(Product.id).subquery()
             query = query.outerjoin(sku_counts, sku_counts.c.product_id == Product.id)
             count = func.coalesce(sku_counts.c.count, 0)
             ordering = (Product.last_success_at.is_(None), count.desc() if sort.endswith("desc") else count.asc(), Product.id)
@@ -402,9 +542,8 @@ def list_analytics_products(session, settings, *, page=1, page_size=24, sort="re
         rows = session.execute(query
             .order_by(*ordering).offset((page - 1) * page_size).limit(page_size)).all()
         identifiers = [product.id for product, _ in rows]
-        counts = dict(session.execute(products_query(Product.id, func.count(ProductVariant.id)).join(
-            ProductVariant, ProductVariant.product_id == Product.id).where(*clauses, Product.id.in_(identifiers),
-            ProductVariant.currency == scope["currency"], current_variant_condition(session)).group_by(Product.id)).all()) if identifiers else {}
+        counts = dict(session.execute(observed_variants_query(session, [*clauses, Product.id.in_(identifiers)],
+            scope["currency"], Product.id, func.count(ProductVariant.id)).group_by(Product.id)).all()) if identifiers else {}
         image_ready = images_table_available(session)
         covers = cover_images(session, identifiers) if image_ready else {}
         image_info = image_coverage(session, clauses, total, ready=image_ready)

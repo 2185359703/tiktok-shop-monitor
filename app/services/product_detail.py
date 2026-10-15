@@ -12,6 +12,8 @@ from app.services.seed_importer import fingerprint
 from app.models import CrawlTask, TaskType
 from app.services.task_runtime import database_now
 from app.services.product_images import persist_product_images
+from app.services.image_backfill import capture_mode_expression
+from app.services.product_content import persist_product_content
 
 
 DETAIL_FIELDS = ("title", "original_category", "color_summary", "size_summary", "currency", "price_text", "price_min", "price_max",
@@ -78,17 +80,20 @@ def persist_product_detail(session, task, snapshot):
     images_upserted = persist_product_images(session, product.id, detail.images,
                                              source_url=snapshot.final_url, source_kind="detail",
                                              observed_at=snapshot.captured_at)
+    content_summary = persist_product_content(session, product.id, detail.content,
+        source_url=snapshot.final_url, response_hash=snapshot.response_hash, observed_at=snapshot.captured_at) if detail.content is not None else {}
     session.flush()
     return {"detail_updated": True, "stale_observation_skipped": False, "variants_seen": len(rows),
             "variants_upserted": len(rows), "new_variants": sum(value.platform_variant_id not in by_id for value in detail.variants),
             "attribute_conflicts": len(detail.raw_attributes["attribute_conflicts"]), "content_hash": content_hash,
-            "images_upserted": images_upserted}
+            "images_upserted": images_upserted, **content_summary}
 
 
 def ensure_initial_detail_task(session, product, shop):
     existing = session.scalar(select(CrawlTask).where(
         CrawlTask.platform == product.platform, CrawlTask.region == product.region,
         CrawlTask.task_type == TaskType.PRODUCT_DETAIL, CrawlTask.resource_type == ResourceType.PRODUCT,
+        capture_mode_expression() == "full",
         CrawlTask.resource_id == str(product.id),
     ).order_by(CrawlTask.id.desc()).limit(1).with_for_update())
     if existing is not None: return existing, False

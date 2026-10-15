@@ -41,10 +41,12 @@ def task_summary(task):
     progress = {key: value for key, value in (task.checkpoint or {}).items()
                 if key in {"page_number", "page_products", "new_products", "new_detail_tasks", "has_more", "complete", "next_task_created",
                            "detail_updated", "stale_observation_skipped", "variants_seen", "variants_upserted", "new_variants", "attribute_conflicts",
-                           "snapshots_written", "variant_snapshots_written", "events_detected", "events_written", "baseline", "comparison_skipped", "window_already_saved", "change_task_created", "images_upserted"}
+                           "snapshots_written", "variant_snapshots_written", "events_detected", "events_written", "baseline", "comparison_skipped", "window_already_saved", "change_task_created", "images_upserted", "content_saved", "content_complete", "content_nodes", "content_parameters", "profile_updated", "product_count_updated"}
                 and type(value) in {int, bool}}
     if (task.checkpoint or {}).get("stop_reason") in {"page_saved", "source_exhausted", "page_budget"}:
         progress["stop_reason"] = task.checkpoint["stop_reason"]
+    if (task.checkpoint or {}).get("observation_status") in {"complete", "partial"}:
+        progress["observation_status"] = task.checkpoint["observation_status"]
     for key in ("snapshot_id", "previous_snapshot_id"):
         value = (task.checkpoint or {}).get(key)
         if value is None or isinstance(value, str) and value.isdecimal():
@@ -55,7 +57,7 @@ def task_summary(task):
             "priority": task.priority, "available_at": task.available_at, "scheduled_for": task.scheduled_for,
             "started_at": task.started_at, "finished_at": task.finished_at,
             "worker_id": task.worker_id, "lease_expires_at": task.lease_expires_at, "progress": progress,
-            "capture_mode": "images_only" if (task.payload or {}).get("capture_mode") == "images_only" else "full"}
+            "capture_mode": (task.payload or {}).get("capture_mode", "full") if (task.payload or {}).get("capture_mode", "full") in {"full", "images_only", "media_content_only"} else "unknown"}
 
 
 @router.get("/capabilities")
@@ -64,6 +66,8 @@ def capabilities(request: Request):
     return {"platform": request.app.state.settings.platform, "region": request.app.state.settings.region,
             "implemented_task_types": sorted(implemented),
             "enabled_task_types": request.app.state.settings.enabled_task_types,
+            "product_detail_capture_modes": ["full", "images_only", "media_content_only"],
+            "image_backfill_enabled": request.app.state.settings.image_backfill_enabled,
             "unimplemented_task_types": [kind for kind in TaskType if kind not in implemented],
             "writes_enabled": request.app.state.settings.api_token is not None}
 

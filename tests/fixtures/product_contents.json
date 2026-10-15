@@ -1,0 +1,319 @@
+{
+  "chouyatou": {
+    "specifications": [
+      {
+        "name": "Brand",
+        "value": "CHOUYATOU"
+      },
+      {
+        "name": "Waist style",
+        "value": "High waist"
+      },
+      {
+        "name": "Apparel fabric stretch",
+        "value": "Medium stretch,Non stretch"
+      },
+      {
+        "name": "Fabric weight",
+        "value": "Lightweight,Medium weight"
+      },
+      {
+        "name": "Hemline form",
+        "value": "Ruffled hemline"
+      },
+      {
+        "name": "Apparel silhouette",
+        "value": "A-line"
+      },
+      {
+        "name": "Additional features",
+        "value": "Lightweight,Pocket"
+      },
+      {
+        "name": "Item length description",
+        "value": "Maxi,Below the knee,Ankle length"
+      },
+      {
+        "name": "Embellishment feature",
+        "value": "Ruffle"
+      },
+      {
+        "name": "Back style",
+        "value": "Backless,Strappy back,Closed-back"
+      },
+      {
+        "name": "Fit type",
+        "value": "Slim,Regular,Relaxed,Fitted"
+      },
+      {
+        "name": "Strap type",
+        "value": "Spaghetti"
+      },
+      {
+        "name": "Occasion",
+        "value": "Wedding"
+      },
+      {
+        "name": "Sleeve type",
+        "value": "Ruffle sleeve"
+      },
+      {
+        "name": "Closure type",
+        "value": "Pull on"
+      },
+      {
+        "name": "Neckline",
+        "value": "U-neck"
+      },
+      {
+        "name": "Sleeve length",
+        "value": "Sleeveless"
+      },
+      {
+        "name": "Style",
+        "value": "Casual,Retro,Sweet,Holiday"
+      },
+      {
+        "name": "Season",
+        "value": "Autumn,Spring,Summer"
+      },
+      {
+        "name": "Size type",
+        "value": "Normal type"
+      },
+      {
+        "name": "Dress length",
+        "value": "MIDI"
+      },
+      {
+        "name": "Pattern",
+        "value": "Plaid"
+      },
+      {
+        "name": "Region of origin",
+        "value": "China"
+      },
+      {
+        "name": "Design",
+        "value": "Shirred"
+      },
+      {
+        "name": "Washing instructions",
+        "value": "Machine washable"
+      },
+      {
+        "name": "Quantity per pack",
+        "value": "1"
+      },
+      {
+        "name": "Clothing type",
+        "value": "Plicated"
+      }
+    ],
+    "desc_blocks": [
+      {
+        "type": "ul",
+        "content": [
+          "Colors may vary slightly from the actual product due to lighting conditions during photography and screen display settings; please refer to the physical item for the most accurate representation.",
+          "The texture of the fabric may differ slightly from what is depicted in the images; this product is crafted from lightweight, breathable material designed for comfortable wear."
+        ]
+      },
+      {
+        "type": "text",
+        "content": null
+      },
+      {
+        "type": "text",
+        "content": null
+      },
+      {
+        "type": "text",
+        "content": null
+      },
+      {
+        "type": "ul",
+        "content": [
+          "Features a cute spaghetti strap and sweet ruffles.",
+          "Shirred smock bust for a flattering fit.",
+          "A-line silhouette hides the tummy effectively.",
+          "Trendy plaid pattern with an elegant square neck."
+        ]
+      },
+      {
+        "type": "text",
+        "content": null
+      },
+      {
+        "type": "ul",
+        "content": [
+          "Sleeveless with a flounce hem below the knee.",
+          "2 side pockets for convenience.",
+          "Available in 4 colors: Khaki, sky blue, black, red.",
+          "Off-the-shoulder dress for versatile wear."
+        ]
+      },
+      {
+        "type": "text",
+        "content": null
+      },
+      {
+        "type": "ul",
+        "content": [
+          "Perfect for office, school, street, dating, evening parties, night clubs, beach, cocktail, weddings, vacations, holidays, and more."
+        ]
+      },
+      {
+        "type": "text",
+        "content": null
+      },
+      {
+        "type": "ul",
+        "content": [
+          "Material: Not specified.",
+          "Length: Below the knee.",
+          "Straps: Spaghetti straps.",
+          "Hem: Flowy flounce hem."
+        ]
+      },
+      {
+        "type": "text",
+        "content": null
+      },
+      {
+        "type": "ul",
+        "content": [
+          "Ideal for various occasions.",
+          "Combines style and comfort, making it a versatile addition to any wardrobe. 🌸🌟🌞"
+        ]
+      }
+    ]
+  },
+  "dokotoo": {
+    "specifications": [
+      {
+        "name": "Apparel fabric stretch",
+        "value": "Medium stretch"
+      },
+      {
+        "name": "Fabric weight",
+        "value": "Lightweight"
+      },
+      {
+        "name": "Hemline form",
+        "value": "Curved"
+      },
+      {
+        "name": "Top length",
+        "value": "3/4 length"
+      },
+      {
+        "name": "Size type",
+        "value": "Normal type"
+      },
+      {
+        "name": "Material",
+        "value": "Recycled polyester"
+      },
+      {
+        "name": "Washing instructions",
+        "value": "Cold wash"
+      },
+      {
+        "name": "Fit",
+        "value": "Loose-fitting"
+      },
+      {
+        "name": "Style",
+        "value": "Basic"
+      },
+      {
+        "name": "Season",
+        "value": "Summer,Spring"
+      },
+      {
+        "name": "Sleeve length",
+        "value": "Short sleeve"
+      },
+      {
+        "name": "Clothing length",
+        "value": "Medium"
+      },
+      {
+        "name": "Neckline",
+        "value": "Crew neck"
+      },
+      {
+        "name": "Occasion",
+        "value": "Casual"
+      },
+      {
+        "name": "Quantity per pack",
+        "value": "1"
+      },
+      {
+        "name": "Pattern",
+        "value": "Plain"
+      },
+      {
+        "name": "Dangerous goods or hazardous materials",
+        "value": "No"
+      }
+    ],
+    "desc_blocks": [
+      {
+        "type": "ul",
+        "content": [
+          "Fabric type: 60%Polyester+35%Viscose+5%Elastane",
+          "【COMFORTABLE MATERIAL】 The women's shorts sleeve tops from Dokotoo are made with a soft and breathable fabric that keeps the skin feeling comfortable, even in sweaty situations. Whether for work, sports, or other activities, these Round neck t-shirts will keep you dry and comfortable all day.",
+          "【ESSENTIAL BASIC】 The deep design of these t-shirts is both and flattering, ensuring that you can avoid any wardrobe malfunctions. These t-shirts are a timeless and essential piece in any wardrobe, adding a touch of sexiness to your outfit.",
+          "【FLATTERING FIT】 The women's fitted shirts are designed with good elasticity to accommodate different body sizes. They come in a variety of colors and sizes, allowing you to have a different and new option every day. These tops for women will fit beautifully and flatteringly.",
+          "Match: This simple basic t-shirt can be paired perfectly with jeans, shorts, leggings, pants, or skirts for a concise and fashionable look. It can also be layered under a jacket in winter for added versatility"
+        ]
+      }
+    ]
+  },
+  "anrabess": {
+    "specifications": [
+      {
+        "name": "Brand",
+        "value": "ANRABESS"
+      },
+      {
+        "name": "Care instructions",
+        "value": "Hand wash only"
+      },
+      {
+        "name": "Material",
+        "value": "50% viscose + 30% nylon + 20% PBT"
+      },
+      {
+        "name": "Washing instructions",
+        "value": "Hand wash only"
+      },
+      {
+        "name": "Quantity per pack",
+        "value": "1"
+      },
+      {
+        "name": "Material",
+        "value": "50% Viscose, 30% Nylon, 20% Polyester"
+      },
+      {
+        "name": "Dangerous goods or hazardous materials",
+        "value": "No"
+      }
+    ],
+    "desc_blocks": [
+      {
+        "type": "ul",
+        "content": [
+          "Size - XS=US(0-2),S=US(4-6),M=US(8-10),L=US(12-14),XL=US(16-18),XXL=US(20-22) ，Choose your normal size, more details in rich description.",
+          "Material and Washing Care - This cardigan is made of 50% Viscose, 30% Nylon, and 20% PBT. The fabric is soft and supple to the touch, with a tight weave that is gentle on the skin, non-irritating, wrinkle-resistant, and pill-resistant. Not lined. Hand wash / Do Not Bleach / Dry Flat / Do not iron.",
+          "Features - This cardigan features a straight, mid-length cut, falling from mid-thigh to just above the knee. This cardigan features a buttonless open front and a classic suit-style large lapel. Large square patch pockets on both sides of the front add a touch of design detail.",
+          "Occassion - This cardigan can be worn over a tank top and jeans for a casual look, suitable for everyday casual occasions such as shopping or commuting to work; it can also be paired with a skirt, dress pants, and dress shoes for more formal occasions such as banquets or light formal events. It is suitable for spring, autumn, and winter.",
+          "Color Notice - Actual colors may slightly vary due to lighting conditions and screen display differences. For accurate color reference, we recommend viewing under natural daylight (D65 standard)."
+        ]
+      }
+    ]
+  }
+}

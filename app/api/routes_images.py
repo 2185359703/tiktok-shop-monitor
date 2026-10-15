@@ -7,9 +7,19 @@ from app.api.routes import Db, scope
 from app.models import Product
 from app.models.product_image import ProductImage
 from app.services.product_images import images_table_available
+from app.services.image_backfill import fixed_image_seed_batch, image_backfill_status
 
 
 router = APIRouter(prefix="/api/v1")
+
+
+@router.get("/images/backfill/status")
+def backfill_status(request: Request, db: Db):
+    try:
+        batch = fixed_image_seed_batch()
+        return image_backfill_status(db, request.app.state.settings, batch)
+    except ValueError:
+        raise HTTPException(409, "image_backfill_scope_not_ready") from None
 
 
 @router.get("/products/{product_id}/images")

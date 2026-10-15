@@ -32,6 +32,7 @@ class Settings:
     snapshot_interval_seconds: int = 3600
     periodic_snapshots_enabled: bool = False
     baseline_on_detail: bool = False
+    image_backfill_enabled: bool = False
     detail_http_backend: str = "httpx"
     resource_document_cooldown: bool = False
     monitored_product_ids: tuple[str, ...] = ()
@@ -57,6 +58,8 @@ class Settings:
     detail_proxy_url: str | None = field(default=None, repr=False)
 
     def __post_init__(self):
+        if type(self.image_backfill_enabled) is not bool:
+            raise ValueError("图片补采开关必须为布尔值。")
         if self.platform != "tiktok_shop" or self.region != "US" or self.currency != "USD":
             raise ValueError("当前适配器仅支持 tiktok_shop / US / USD。")
         positive = (self.lease_seconds, self.heartbeat_seconds, self.poll_seconds,

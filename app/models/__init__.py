@@ -8,6 +8,7 @@ from .enums import (
 )
 from .product import Product, ProductVariant
 from .product_image import ProductImage
+from .product_content import ProductContent
 from .matching import MatchStatus, ProductMatch, SkuMatch
 from .seed import SeedShopObservation, ShopSeedLink
 from .shop import Shop
@@ -21,4 +22,5 @@ __all__ = [
     "StockStatus", "AvailabilityStatus", "ChangeEventType", "TaskType",
     "ResourceType", "TaskStatus",
     "ProductImage", "ProductMatch", "SkuMatch", "MatchStatus",
+    "ProductContent",
 ]

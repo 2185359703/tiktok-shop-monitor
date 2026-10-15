@@ -1,6 +1,14 @@
-# Versioned frontend/API rollout; the collection runtime keeps its existing tag.
+# Versioned application rollout; existing infrastructure volumes stay in place.
 services:
+  mysql:
+    mem_limit: 1g
+    command: ["--character-set-server=utf8mb4", "--collation-server=utf8mb4_0900_ai_ci", "--default-time-zone=+00:00", "--innodb-buffer-pool-size=536870912", "--max-connections=70", "--performance-schema=OFF", "--skip-log-bin"]
   api:
-    image: tiktok-shop-monitor:frontend-20261015t073634z-608d3d90
+    image: tiktok-shop-monitor:frontend-20261015-images-93e6b420
   worker:
-    image: tiktok-shop-monitor:frontend-20261015t073634z-608d3d90
+    image: tiktok-shop-monitor:frontend-20261015-images-93e6b420
+    stop_grace_period: 300s
+  scheduler:
+    image: tiktok-shop-monitor:frontend-20261015-images-93e6b420
+  collection:
+    image: tiktok-shop-monitor:frontend-20261015-images-93e6b420

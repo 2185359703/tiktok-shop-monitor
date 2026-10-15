@@ -23,6 +23,7 @@ periodic_snapshots_enabled = false
 monitored_product_ids = []
 # 首次详情请求同事务保存真实基线，不为建立基线重复请求每个商品。
 baseline_on_detail = true
+image_backfill_enabled = true
 
 [queue]
 broker_generation = "g20261015"

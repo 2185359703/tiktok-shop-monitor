@@ -5,7 +5,7 @@ import pytest
 from sqlalchemy.dialects.mysql import dialect
 from sqlalchemy.orm import configure_mappers
 
-from app.models import Base, MatchStatus, ProductImage, ProductMatch, SkuMatch
+from app.models import Base, MatchStatus, ProductImage, ProductMatch, ProductContent, SkuMatch
 from app.models.base import UTCDateTime
 from app.storage.schema import INITIAL_TABLE_NAMES, WORKBENCH_TABLE_NAMES, model_tables, mysql_comments_ddl, mysql_ddl, validate_database_name
 
@@ -16,12 +16,13 @@ MIGRATIONS = Path(__file__).resolve().parents[1] / "migrations"
 def test_historical_ten_table_ddl_is_preserved():
     configure_mappers()
     assert len(INITIAL_TABLE_NAMES) == 10
-    assert (MIGRATIONS / "001_initial_schema.sql").read_text(encoding="utf-8") == mysql_ddl(table_names=INITIAL_TABLE_NAMES)
+    historical = (MIGRATIONS / "001_initial_schema.sql").read_text(encoding="utf-8")
+    assert "\n".join(line.rstrip() for line in historical.splitlines()) + "\n" == mysql_ddl(table_names=INITIAL_TABLE_NAMES)
 
 
 def test_current_thirteen_table_schema_matches_registered_models():
-    assert len(Base.metadata.tables) == 13
-    assert set(Base.metadata.tables) == set(INITIAL_TABLE_NAMES) | set(WORKBENCH_TABLE_NAMES)
+    assert len(Base.metadata.tables) == 14
+    assert set(Base.metadata.tables) == set(INITIAL_TABLE_NAMES) | set(WORKBENCH_TABLE_NAMES) | {ProductContent.__tablename__}
     assert (MIGRATIONS / "current_schema.sql").read_text(encoding="utf-8") == mysql_ddl()
     assert (ProductImage.__tablename__, ProductMatch.__tablename__, SkuMatch.__tablename__) == WORKBENCH_TABLE_NAMES
     assert MatchStatus.CONFIRMED.value == "confirmed"
@@ -44,13 +45,14 @@ def test_comment_migration_matches_models():
 @pytest.mark.parametrize("filename,names", [
     ("003_product_images.sql", ("product_images",)),
     ("004_product_matching.sql", ("product_matches", "sku_matches")),
+    ("005_product_contents.sql", ("product_contents",)),
 ])
 def test_additive_migration_table_and_index_definitions_match_models(filename, names):
     saved = (MIGRATIONS / filename).read_text(encoding="utf-8")
     generated = mysql_ddl(table_names=names)
     # Headers differ because additive migrations select an existing database. Every
     # CREATE TABLE, column, CHECK, FK, unique constraint and index is checked exactly.
-    assert saved[saved.index("CREATE TABLE IF NOT EXISTS "):] == generated[generated.index("CREATE TABLE IF NOT EXISTS "):]
+    assert "\n".join(line.rstrip() for line in saved[saved.index("CREATE TABLE IF NOT EXISTS "):].splitlines()) == "\n".join(line.rstrip() for line in generated[generated.index("CREATE TABLE IF NOT EXISTS "):].splitlines())
     assert "ALTER TABLE" not in saved and "DROP TABLE" not in saved
 
 

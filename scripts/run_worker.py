@@ -2,6 +2,7 @@ import argparse
 import json
 import logging
 import socket
+from threading import Event
 from uuid import uuid4
 
 from app.queue.contracts import TaskMessage
@@ -21,7 +22,10 @@ def main():
             print(json.dumps({"implemented_task_types": sorted(registry),
                               "enabled_task_types": list(settings.enabled_task_types)}, ensure_ascii=False))
             return 0
-        stop = stop_signal()
+        # Stop intake on SIGTERM, while the current delivery keeps its request
+        # gate, SQL lease heartbeat and MQ polling until commit/ACK completes.
+        shutdown = stop_signal()
+        stop = Event()
         worker_id = f"{socket.gethostname()}:{uuid4().hex[:12]}"[:128]
         if not args.once:
             server, _ = start_metrics(metrics, settings.worker_metrics_port, settings.host)
@@ -29,17 +33,19 @@ def main():
             logging.getLogger(__name__).info("worker_idle_no_collectors_enabled")
             if args.once:
                 return 0
-            while not stop.wait(1):
+            while not shutdown.wait(1):
                 pass
             return 0
         broker, gate = infrastructure(settings)
         worker = Worker(settings, factory, registry, gate, metrics, worker_id, stop)
-        while not stop.is_set():
+        while not shutdown.is_set():
             try:
                 if broker.connection is None or not broker.connection.is_open:
                     broker.connect()
                 found = False
                 for kind in settings.enabled_task_types:
+                    if shutdown.is_set():
+                        break
                     delivery = broker.get(kind)
                     if delivery is None:
                         continue
@@ -68,7 +74,7 @@ def main():
                     pass
                 if args.once:
                     return 1
-                stop.wait(settings.poll_seconds)
+                shutdown.wait(settings.poll_seconds)
         return 0
     finally:
         if server:

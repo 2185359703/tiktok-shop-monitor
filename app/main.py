@@ -17,6 +17,7 @@ from app.api.routes_reports import router as reports_router
 from app.api.routes_collections import router as collections_router
 from app.api.routes_analytics import router as analytics_router
 from app.api.routes_images import router as images_router
+from app.api.routes_content import router as content_router
 from app.api.routes_matching import router as matching_router
 from app.observability.metrics import Metrics
 from app.settings import Settings
@@ -49,6 +50,7 @@ def create_app(settings: Settings | None = None, engine=None) -> FastAPI:
     application.include_router(collections_router)
     application.include_router(analytics_router)
     application.include_router(images_router)
+    application.include_router(content_router)
     application.include_router(matching_router)
     application.mount("/ui-assets", StaticFiles(directory=FRONTEND_DIRECTORY), name="ui-assets")
 

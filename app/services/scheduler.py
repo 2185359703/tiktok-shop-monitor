@@ -7,6 +7,7 @@ from app.queue.contracts import TaskMessage
 from app.services.task_runtime import recover_expired_leases
 from app.storage.database import session_scope
 from app.services.snapshot_service import enqueue_due_snapshots
+from app.services.image_backfill import BACKFILL_MODES, capture_mode_expression
 
 
 READY = (TaskStatus.PENDING, TaskStatus.RETRY_WAITING, TaskStatus.ABANDONED)
@@ -23,6 +24,52 @@ class Scheduler:
         self.settings, self.factory, self.broker, self.gate, self.metrics = settings, factory, broker, gate, metrics
         self.cursors = {}
         self.rotation = 0
+        self.detail_rotation = 0
+
+    def dispatch_lane(self, kind, mode, budget, scan_budget):
+        """Share one broker queue's budget while keeping capture modes fair."""
+        settings = self.settings
+        cursor_key = (kind, mode)
+        published = scanned = 0
+        while scanned < scan_budget and published < budget:
+            with self.factory() as session:
+                query = select(CrawlTask).where(
+                    CrawlTask.platform == settings.platform, CrawlTask.region == settings.region,
+                    CrawlTask.task_type == kind, CrawlTask.status.in_(READY),
+                    CrawlTask.available_at <= func.utc_timestamp(6), CrawlTask.lease_token.is_(None),
+                    CrawlTask.attempt_count < CrawlTask.max_attempts,
+                )
+                if kind == TaskType.PRODUCT_DETAIL:
+                    query = query.where(capture_mode_expression().in_(mode) if isinstance(mode, tuple)
+                                        else capture_mode_expression() == mode)
+                cursor = self.cursors.get(cursor_key)
+                if cursor:
+                    priority, identifier = cursor
+                    query = query.where(or_(CrawlTask.priority < priority,
+                                           and_(CrawlTask.priority == priority, CrawlTask.id > identifier)))
+                rows = session.scalars(query.order_by(CrawlTask.priority.desc(), CrawlTask.id)
+                    .limit(min(100, scan_budget - scanned))).all()
+            if not rows:
+                self.cursors[cursor_key] = None
+                break
+            for task in rows:
+                self.cursors[cursor_key] = task.priority, task.id
+                scanned += 1
+                key = f"{task.task_id}:{task.attempt_count}:{task.available_at.isoformat()}"
+                token = self.gate.reserve_publish(key)
+                if token is None:
+                    continue
+                try:
+                    self.broker.publish(TaskMessage(task.task_id, task.task_type))
+                except Exception:
+                    self.gate.release_publish(key, token)
+                    self.cursors[cursor_key] = None
+                    raise
+                published += 1
+                self.metrics.published.labels(task.task_type.value).inc()
+                if published >= budget:
+                    break
+        return published, scanned
 
     def dispatch_once(self) -> dict:
         settings = self.settings
@@ -58,46 +105,25 @@ class Scheduler:
             if budget <= 0:
                 backpressured.append(kind.value)
                 continue
+            modes = (None,)
+            if kind == TaskType.PRODUCT_DETAIL:
+                modes = ("full", BACKFILL_MODES) if settings.image_backfill_enabled else ("full",)
+                first = self.detail_rotation % len(modes)
+                self.detail_rotation += 1
+                modes = modes[first:] + modes[:first]
             kind_published = kind_scanned = 0
-            while kind_scanned < per_kind_scan and kind_published < budget:
-                with self.factory() as session:
-                    query = select(CrawlTask).where(
-                        CrawlTask.platform == settings.platform, CrawlTask.region == settings.region,
-                        CrawlTask.task_type == kind, CrawlTask.status.in_(READY),
-                        CrawlTask.available_at <= func.utc_timestamp(6), CrawlTask.lease_token.is_(None),
-                        CrawlTask.attempt_count < CrawlTask.max_attempts,
-                    )
-                    cursor = self.cursors.get(kind)
-                    if cursor:
-                        priority, identifier = cursor
-                        query = query.where(or_(CrawlTask.priority < priority,
-                                               and_(CrawlTask.priority == priority, CrawlTask.id > identifier)))
-                    rows = session.scalars(query.order_by(CrawlTask.priority.desc(), CrawlTask.id).limit(
-                        min(100, per_kind_scan - kind_scanned, settings.dispatch_scan_limit - scanned))).all()
-                if not rows:
-                    self.cursors[kind] = None
+            for position, mode in enumerate(modes):
+                remaining_lanes = len(modes) - position
+                remaining_budget = budget - kind_published
+                remaining_scan = min(per_kind_scan - kind_scanned, settings.dispatch_scan_limit - scanned)
+                if remaining_budget <= 0 or remaining_scan <= 0:
                     break
-                for task in rows:
-                    self.cursors[kind] = task.priority, task.id
-                    scanned += 1
-                    kind_scanned += 1
-                    key = f"{task.task_id}:{task.attempt_count}:{task.available_at.isoformat()}"
-                    token = self.gate.reserve_publish(key)
-                    if token is None:
-                        continue
-                    try:
-                        self.broker.publish(TaskMessage(task.task_id, task.task_type))
-                    except Exception:
-                        self.gate.release_publish(key, token)
-                        # Do not skip the failed row behind an advanced cursor.
-                        self.cursors[kind] = None
-                        raise
-                    published += 1
-                    kind_published += 1
-                    self.metrics.published.labels(task.task_type.value).inc()
-                    if kind_published >= budget or scanned >= settings.dispatch_scan_limit:
-                        break
-                if scanned >= settings.dispatch_scan_limit:
-                    break
+                lane_budget = max(1, remaining_budget // remaining_lanes)
+                lane_scan = max(1, remaining_scan // remaining_lanes)
+                sent, inspected = self.dispatch_lane(kind, mode, lane_budget, lane_scan)
+                published += sent
+                scanned += inspected
+                kind_published += sent
+                kind_scanned += inspected
         return {"recovered": recovered, "published": published, "snapshots_scheduled": scheduled,
                 "backpressured_types": backpressured}
