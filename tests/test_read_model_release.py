@@ -21,6 +21,8 @@ def release(tmp_path, monkeypatch):
         if arguments[:2] == ["docker", "ps"]:
             return "fixture-api"
         if arguments[:2] == ["docker", "inspect"]:
+            if "{{.Config.Image}}" in arguments:
+                return "old-image"
             return json.dumps({"com.docker.compose.project.config_files": ",".join(str(path) for path in files)})
         raise AssertionError("Unexpected external operation")
     monkeypatch.setattr(Release, "run", run)
@@ -32,6 +34,7 @@ def release(tmp_path, monkeypatch):
 
 def test_release_preserves_all_live_compose_overrides(release):
     assert len(release.base_files) == 3
+    assert release.environment["APP_IMAGE"] == "old-image"
     assert any(path.name == "compose.async.yml" for path in release.base_files)
     release.write_overlay()
     services = json.loads(release.overlay.read_text())["services"]

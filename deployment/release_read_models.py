@@ -36,6 +36,7 @@ class Release:
         self.evidence.mkdir(parents=True, exist_ok=True)
         self.record_path = self.evidence / "release-state.json"
         self.record = json.loads(self.record_path.read_text()) if self.record_path.exists() else {}
+        self.environment = dict(os.environ)
         if self.record and self.record["commit"] != commit:
             raise ValueError("Release identity was already used by another commit")
         files = self.record.get("base_files")
@@ -46,6 +47,9 @@ class Release:
                 raise ValueError("Expected exactly one live project API")
             labels = json.loads(self.run(["docker", "inspect", "--format", "{{json .Config.Labels}}", ids[0]]))
             files = labels.get("com.docker.compose.project.config_files", "").split(",")
+            self.environment["APP_IMAGE"] = self.run(["docker", "inspect", "--format", "{{.Config.Image}}", ids[0]])
+        else:
+            self.environment["APP_IMAGE"] = self.record["previous_images"]["api"][0]
         self.base_files = [Path(name).resolve() for name in files if name]
         if not self.base_files or any(not path.is_relative_to(self.root) or not path.is_file() for path in self.base_files):
             raise ValueError("Live Compose files must belong to this project")
@@ -55,7 +59,7 @@ class Release:
         self.compose = [*self.base, "-f", str(self.overlay)]
 
     def run(self, argv, *, timeout=None):
-        result = subprocess.run(argv, cwd=self.root, capture_output=True, text=True, timeout=timeout)
+        result = subprocess.run(argv, cwd=self.root, env=self.environment, capture_output=True, text=True, timeout=timeout)
         if result.returncode:
             log = self.evidence / "last-command-error.txt"
             log.write_text(result.stderr, encoding="utf-8")
@@ -229,15 +233,21 @@ class Release:
                 time.sleep(1)
             else:
                 raise RuntimeError("Public API readiness failed")
-            schema = self.read("/openapi.json")
-            schema["servers"] = [{"url": "/shopscope"}]
-            public_schema = self.root / "deployment/public-openapi.json"
-            if public_schema.exists():
-                shutil.copy2(public_schema, self.evidence / "previous-public-openapi.json")
-            public_schema.write_text(json.dumps(schema, ensure_ascii=False) + "\n")
+            # Reuse the prefix-aware publisher from this same committed source.
+            import importlib.util
+            spec = importlib.util.spec_from_file_location("committed_ui_publisher", self.source / "deployment/rollout_async.py")
+            publisher = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(publisher)
+            publisher.ROOT = self.root
+            publisher.publish_ui(self.source, self.commit)
             # Stop only the validated staging service; retain its container for diagnosis.
             self.run([*self.compose, "stop", "api-candidate"])
             self.save("live", public_api_changed=True, public_url="http://34.20.217.151/shopscope/")
+            active = {"commit": self.commit, "image": self.image,
+                "compose_files": [str(path) for path in self.base_files] + [str(self.overlay)],
+                "compose_environment": {"APP_IMAGE": self.environment["APP_IMAGE"]},
+                "worker_count": 2, "infrastructure_recreated": False, "release_record": str(self.record_path)}
+            (self.root / "deployment/active-read-model-release.json").write_text(json.dumps(active, indent=2) + "\n")
         except Exception:
             self.write_overlay(public=False)
             self.up("api", compose=self.base)
@@ -253,7 +263,13 @@ def main():
     parser.add_argument("--phase", choices=("prepare", "status", "cutover"), required=True)
     args = parser.parse_args()
     release = Release(args.project_root, args.release_id, args.commit)
-    getattr(release, args.phase)()
+    if args.phase == "status":
+        release.status()
+    else:
+        import fcntl
+        with (release.root / "data/samples/deployment/async-rollout.lock").open("a") as lock:
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            getattr(release, args.phase)()
 
 
 if __name__ == "__main__":
