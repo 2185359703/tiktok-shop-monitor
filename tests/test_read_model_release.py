@@ -40,7 +40,10 @@ def test_release_preserves_all_live_compose_overrides(release):
     services = json.loads(release.overlay.read_text())["services"]
     assert "api" not in services
     assert services["analytics"]["environment"]["DATABASE_URL"].startswith("${")
+    assert services["analytics"]["environment"]["ANALYTICS_CONCURRENCY"] == "4"
     assert services["api-candidate"]["ports"] == ["127.0.0.1:18081:8000"]
+    release.write_overlay(public=True)
+    assert json.loads(release.overlay.read_text())["services"]["analytics"]["environment"]["ANALYTICS_CONCURRENCY"] == "1"
 
 
 def test_release_cannot_switch_before_backfill_finishes(release, monkeypatch):

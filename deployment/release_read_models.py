@@ -151,7 +151,7 @@ class Release:
         environment = {"ANALYTICS_ENABLED": "1", "SETTINGS_FILE": runtime["target"]}
         services = {name: {"image": self.image, "environment": environment, "volumes": [runtime], "stop_grace_period": "300s"}
                     for name in ("worker", "scheduler", "collection")}
-        analysis_env = {**environment, "DATABASE_URL": "${DATABASE_URL:?Set DATABASE_URL}", "ANALYTICS_CONCURRENCY": "1",
+        analysis_env = {**environment, "DATABASE_URL": "${DATABASE_URL:?Set DATABASE_URL}", "ANALYTICS_CONCURRENCY": "1" if public else "4",
                         "DB_POOL_SIZE": "3", "DB_MAX_OVERFLOW": "1"}
         services["analytics"] = {"image": self.image, "command": ["python", "-m", "scripts.run_analytics"],
             "environment": analysis_env, "volumes": [runtime], "mem_limit": "256m", "cpus": "0.5", "restart": "unless-stopped",
@@ -198,7 +198,7 @@ class Release:
                 self.save("migrating", migration=module, result=json.loads(result))
             self.write_overlay()
             self.up("worker", "scheduler", "collection", "analytics", "api-candidate")
-            self.save("warming", public_api_changed=False)
+            self.save("warming", public_api_changed=False, analytics_concurrency=4)
         except Exception:
             self.up("worker", "scheduler", "collection", compose=self.base)
             self.save("prepare_failed_old_writers_restored")
@@ -226,7 +226,7 @@ class Release:
                 raise ValueError("Default statistics are not ready")
         self.write_overlay(public=True)
         try:
-            self.up("api")
+            self.up("api", "analytics")
             deadline = time.monotonic() + 90
             while time.monotonic() < deadline:
                 try:
@@ -246,7 +246,7 @@ class Release:
             publisher.publish_ui(self.source, self.commit)
             # Stop only the validated staging service; retain its container for diagnosis.
             self.run([*self.compose, "stop", "api-candidate"])
-            self.save("live", public_api_changed=True, public_url="http://34.20.217.151/shopscope/")
+            self.save("live", public_api_changed=True, analytics_concurrency=1, public_url="http://34.20.217.151/shopscope/")
             active = {"commit": self.commit, "image": self.image,
                 "compose_files": [str(path) for path in self.base_files] + [str(self.overlay)],
                 "compose_environment": {"APP_IMAGE": self.environment["APP_IMAGE"]},

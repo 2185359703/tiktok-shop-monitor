@@ -37,7 +37,9 @@ async def run(config, args):
             if args.once:
                 print(json.dumps({"processed": any(jobs), "jobs_processed": sum(jobs)}))
                 return 0
-            await pause_until_stop(stop, .05 if any(jobs) else 1)
+            # These jobs only read/write our database. Source-site pacing lives
+            # in the collection gate; avoid an artificial 20-jobs/s refill cap.
+            await pause_until_stop(stop, .001 if any(jobs) else 1)
         return 0
     finally:
         await database.close()
