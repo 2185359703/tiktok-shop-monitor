@@ -29,6 +29,10 @@ def backfill_batch(db, config, *, batch_size=64):
     state = dict(row.parameters)
     if state.get("ready"):
         return True
+    queued = db.scalar(select(func.count()).select_from(Job).where(Job.schema_version == VERSION,
+        Job.is_pending.is_(True), Job.kind.in_(("product_projection", "event_projection"))))
+    if queued >= 512:
+        return False
     products = select(Product.id).where(Product.platform == config.platform, Product.region == config.region)
     events = select(ChangeEvent.id).join(Product, Product.id == ChangeEvent.product_id).where(
         Product.platform == config.platform, Product.region == config.region)
@@ -61,7 +65,8 @@ def backfill_batch(db, config, *, batch_size=64):
     for identifier in missing_events:
         enqueue(db, "event_projection", {"event_id": str(identifier)})
     pending = db.scalar(select(func.count()).select_from(Job).where(Job.schema_version == VERSION,
-        Job.kind.in_(("product_projection", "event_projection")), Job.requested_revision > Job.completed_revision))
+        Job.kind.in_(("product_projection", "event_projection")), Job.is_pending.is_(True),
+        Job.requested_revision > Job.completed_revision))
     state["ready"] = not missing and not missing_events and pending == 0
     row.parameters = state
     return state["ready"]

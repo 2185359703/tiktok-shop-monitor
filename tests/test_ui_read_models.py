@@ -124,6 +124,16 @@ def test_equivalent_filters_share_the_prewarmed_query_key():
     assert parameters(Settings(), {"price_min": "10.0"}) == parameters(Settings(), {"price_min": 10})
 
 
+def test_backfill_resumes_without_flooding_a_persisted_backlog(analytics_db):
+    for identifier in range(10000, 10512):
+        enqueue(analytics_db, "product_projection", {"product_id": str(identifier)})
+    analytics_db.commit()
+    assert not backfill_batch(analytics_db, Settings())
+    assert analytics_db.scalar(select(func.count()).select_from(Job).where(Job.kind == "product_projection")) == 512
+    row = job_row(analytics_db, "control", {**scope(Settings()), "name": "backfill"})
+    assert "product_after" not in row.parameters
+
+
 def test_event_cursor_rejects_changed_filter_and_freezes_published_watermark(analytics_db):
     project(analytics_db)
     params = parameters(Settings(), {"lookback_hours": 720})

@@ -25,13 +25,13 @@ async def run(config, args):
             return 0
         if not enabled():
             raise ValueError("Set ANALYTICS_ENABLED=1 on all writers and the API before starting the backfill.")
-        stop, runner, last_maintenance = stop_signal(), AsyncAnalyticsRunner(database, config), 0
+        stop, runner, last_maintenance, last_backfill = stop_signal(), AsyncAnalyticsRunner(database, config), 0, 0
         while not stop.is_set():
+            if time.monotonic() - last_backfill >= 1 or args.once:
+                await database.transaction(backfill_batch, config)
+                last_backfill = time.monotonic()
             if time.monotonic() - last_maintenance >= 10 or args.once:
-                def maintenance(db):
-                    backfill_batch(db, config)
-                    maintain(db, config)
-                await database.transaction(maintenance)
+                await database.transaction(maintain, config)
                 last_maintenance = time.monotonic()
             jobs = await asyncio.gather(*(runner.run_once() for _ in range(config.analytics_concurrency)))
             if args.once:
