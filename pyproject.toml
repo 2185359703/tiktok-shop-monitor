@@ -27,7 +27,7 @@ test = ["pytest>=8,<9"]
 include = ["app*", "scripts*"]
 
 [tool.setuptools.package-data]
-"app" = ["frontend/*.html", "frontend/*.css", "frontend/*.js", "frontend/fonts/*"]
+"app" = ["frontend/*.html", "frontend/*.css", "frontend/*.js", "frontend/fonts/*", "frontend/assets/*"]
 "app.reports" = ["templates/*.html"]
 
 [tool.pytest.ini_options]

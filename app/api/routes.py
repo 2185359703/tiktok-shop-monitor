@@ -41,7 +41,7 @@ def task_summary(task):
     progress = {key: value for key, value in (task.checkpoint or {}).items()
                 if key in {"page_number", "page_products", "new_products", "new_detail_tasks", "has_more", "complete", "next_task_created",
                            "detail_updated", "stale_observation_skipped", "variants_seen", "variants_upserted", "new_variants", "attribute_conflicts",
-                           "snapshots_written", "variant_snapshots_written", "events_detected", "events_written", "baseline", "comparison_skipped", "window_already_saved", "change_task_created"}
+                           "snapshots_written", "variant_snapshots_written", "events_detected", "events_written", "baseline", "comparison_skipped", "window_already_saved", "change_task_created", "images_upserted"}
                 and type(value) in {int, bool}}
     if (task.checkpoint or {}).get("stop_reason") in {"page_saved", "source_exhausted", "page_budget"}:
         progress["stop_reason"] = task.checkpoint["stop_reason"]
@@ -54,7 +54,8 @@ def task_summary(task):
             "status": task.status, "attempt_count": task.attempt_count, "max_attempts": task.max_attempts,
             "priority": task.priority, "available_at": task.available_at, "scheduled_for": task.scheduled_for,
             "started_at": task.started_at, "finished_at": task.finished_at,
-            "worker_id": task.worker_id, "lease_expires_at": task.lease_expires_at, "progress": progress}
+            "worker_id": task.worker_id, "lease_expires_at": task.lease_expires_at, "progress": progress,
+            "capture_mode": "images_only" if (task.payload or {}).get("capture_mode") == "images_only" else "full"}
 
 
 @router.get("/capabilities")
@@ -136,8 +137,16 @@ def product_detail(product_id: int, request: Request, db: Db):
             "product_url": product.product_url, "currency": product.currency, "pricing_context": product.pricing_context,
             "price_min": str(product.price_min) if product.price_min is not None else None,
             "price_max": str(product.price_max) if product.price_max is not None else None,
-            "stock_status": product.stock_status, "last_seen_at": product.last_seen_at,
+            "original_price_min": str(product.original_price_min) if product.original_price_min is not None else None,
+            "original_price_max": str(product.original_price_max) if product.original_price_max is not None else None,
+            "discount_rate": str(product.discount_rate) if product.discount_rate is not None else None,
+            "rating": str(product.rating) if product.rating is not None else None,
+            "review_count": product.review_count, "sales_count": product.sales_count,
+            "sales_count_text": product.sales_count_text,
+            "stock_status": product.stock_status, "availability_status": product.availability_status,
+            "first_seen_at": product.first_seen_at, "last_seen_at": product.last_seen_at,
             "description": product.description, "original_category": product.original_category,
+            "normalized_category": product.normalized_category,
             "brand": product.brand, "material": product.material, "gender": product.gender, "season": product.season,
             "style": product.style, "fit": product.fit, "garment_length": product.garment_length, "pattern": product.pattern,
             "colors": product.color_summary, "sizes": product.size_summary,

@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="docs/assets/shopscope.svg" alt="ShopScope" width="80" height="80">
+  <img src="app/frontend/assets/shopscope-logo.png" alt="ShopScope" width="80" height="80">
 </p>
 
 <h1 align="center">ShopScope</h1>
