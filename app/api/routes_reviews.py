@@ -5,7 +5,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import func, select
 
 from app.api.routes import After, Db, Limit, require_write_token, scope
-from app.models import CrawlTask, Product, ProductReview, TaskStatus, TaskType
+from app.models import CrawlTask, Product, ProductReview, ResourceType, TaskStatus, TaskType
 from app.services.product_reviews import ensure_review_task, reviews_available
 
 
@@ -27,7 +27,8 @@ def product_reviews(product_id: int, request: Request, db: Db, limit: Limit = 20
                       .order_by(ProductReview.id).limit(limit + 1)).all()
     count = db.scalar(select(func.count()).select_from(ProductReview).where(ProductReview.product_id == product_id))
     latest = db.scalar(select(CrawlTask).where(*scope(CrawlTask, request), CrawlTask.task_type == TaskType.PRODUCT_REVIEWS,
-        CrawlTask.resource_id == str(product_id)).order_by(CrawlTask.scheduled_for.desc(), CrawlTask.id.desc()).limit(1))
+        CrawlTask.resource_type == ResourceType.PRODUCT, CrawlTask.resource_id == str(product_id))
+        .order_by(CrawlTask.scheduled_for.desc(), CrawlTask.id.desc()).limit(1))
     progress = (latest.checkpoint or {}) if latest else {}
     complete = bool(latest and latest.status == TaskStatus.SUCCEEDED and progress.get("complete") is True)
     status = "complete" if complete else "partial" if count else "not_captured"
