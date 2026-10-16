@@ -67,9 +67,12 @@ def product_query(db, params, basis="current"):
     query = select(P, Shop.canonical_name).join(Shop, Shop.id == P.shop_id).where(
         *product_conditions(params, basis, indexed_attribute=indexed))
     if indexed:
-        matching = select(Attribute.product_id).where(Attribute.schema_version == VERSION, Attribute.basis == basis,
-            Attribute.attribute == params["attribute"], Attribute.value == params["value"])
-        query = query.where(P.product_id.in_(matching))
+        # Probe this product's small label set. A global materialized IN set
+        # expands tens of thousands of matches before returning page one.
+        matching = select(literal(1)).where(Attribute.schema_version == VERSION, Attribute.basis == basis,
+            Attribute.product_id == P.product_id, Attribute.attribute == params["attribute"],
+            Attribute.value == params["value"]).correlate(P).limit(1).scalar_subquery()
+        query = query.where(matching.is_not(None))
     elif params.get("attribute") in {"color", "size"}:
         column = P.payload["color_summary" if params["attribute"] == "color" else "size_summary"]
         # Reuse the dialect's JSON table helper; filter before LIMIT, never in Python after pagination.
@@ -102,13 +105,12 @@ def list_products(db, params, *, page=1, page_size=24, sort="recent"):
     descending = sort == "recent" or sort.endswith("_desc")
     tie_break = P.product_id.desc() if descending else P.product_id.asc()
     query = product_query(db, params).with_only_columns(P.product_id.label("page_product_id"))
-    if not (set(params) - set(SCOPE_FIELDS)):
-        # Scope columns are correlated; MySQL can underestimate their combined
-        # selectivity and switch back to a catalog filesort on the second page.
-        index = {"recent": "ix_read_products_recent", "title": "ix_read_products_title",
-                 "title_desc": "ix_read_products_title", "price_desc": "ix_read_products_price",
-                 "sku_count_desc": "ix_read_products_sku"}.get(sort, "ix_read_products_catalog")
-        query = query.with_hint(P, f"FORCE INDEX ({index})", dialect_name="mysql")
+    # Drive the limited page from the ordered index, including filtered reads.
+    # The catalog index also covers scope/eligibility at deep recent offsets.
+    index = {"recent": "ix_read_products_catalog", "title": "ix_read_products_title",
+             "title_desc": "ix_read_products_title", "price_desc": "ix_read_products_price",
+             "sku_count_desc": "ix_read_products_sku"}.get(sort, "ix_read_products_catalog")
+    query = query.with_hint(P, f"FORCE INDEX ({index})", dialect_name="mysql").prefix_with("STRAIGHT_JOIN", dialect="mysql")
     offset, count = (page - 1) * page_size, page_size + 1
     if sort in {"price_asc", "sku_count_asc", "stock_asc", "stock_desc"}:
         column, index = ((P.price_min, "ix_read_products_price") if sort == "price_asc" else
@@ -116,8 +118,7 @@ def list_products(db, params, *, page=1, page_size=24, sort="recent"):
         unknown = column == "unknown" if sort.startswith("stock_") else column.is_(None)
         known = column != "unknown" if sort.startswith("stock_") else column.is_not(None)
         base = product_query(db, params).with_only_columns(P.product_id.label("product_id"), column.label("sort_value"))
-        if not (set(params) - set(SCOPE_FIELDS)):
-            base = base.with_hint(P, f"FORCE INDEX ({index})", dialect_name="mysql")
+        base = base.with_hint(P, f"FORCE INDEX ({index})", dialect_name="mysql").prefix_with("STRAIGHT_JOIN", dialect="mysql")
         value_order = column.desc() if descending else column.asc()
         # Each branch contributes at most the requested prefix. Sorting their
         # scalar keys preserves unknown-last paging without a catalog COUNT or

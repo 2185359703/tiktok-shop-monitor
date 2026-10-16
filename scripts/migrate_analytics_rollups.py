@@ -1,4 +1,4 @@
-"""Create the additive incremental-summary table; source tables are unchanged."""
+"""Create summary and attribute-index tables; source tables are unchanged."""
 
 import argparse
 import json

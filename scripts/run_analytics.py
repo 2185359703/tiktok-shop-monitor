@@ -25,7 +25,7 @@ async def run(config, args):
     background_workers = []
     try:
         if not await database.read(lambda db: tables_ready(db.connection())):
-            raise ValueError("Run scripts.migrate_analytics --execute before enabling analytics.")
+            raise ValueError("Run scripts.migrate_analytics --execute and scripts.migrate_analytics_rollups --execute before enabling analytics.")
         if args.status:
             print(json.dumps({"enabled": enabled(), "ready": await database.read(ready, config)}))
             return 0
