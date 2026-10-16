@@ -26,6 +26,7 @@ from app.observability.metrics import Metrics
 from app.settings import Settings
 from app.storage.database import make_engine, make_session_factory
 from app.storage.async_database import AsyncDatabase, app_call, make_async_engine
+from app.services.ui_snapshot_cache import UISnapshotCache
 from app.workers.handlers import handler_registry, validate_enabled
 
 
@@ -47,10 +48,11 @@ def create_app(settings: Settings | None = None, engine=None) -> FastAPI:
             application.state.database = None
             application.state.factory = make_session_factory(db_engine)
         application.state.metrics = Metrics()
+        application.state.ui_snapshot_cache = UISnapshotCache(config)
         try:
             yield
         finally:
-            for name in ("report_cache", "workbench_cache"):
+            for name in ("report_cache", "workbench_cache", "ui_snapshot_cache"):
                 cache = getattr(application.state, name, None)
                 if cache is not None:
                     await cache.close()

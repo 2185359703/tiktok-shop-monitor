@@ -72,6 +72,16 @@ def test_mysql_projection_and_snapshots_preserve_real_snapshot_fields(session, m
         publish_snapshot(session, kind, params, 1, result, stamp)
         session.flush()
         assert read_snapshot(session, kind, params)[0] == 200
+    # Exercise JSON summaries and streamed reads with the actual MySQL dialect.
+    import time
+    from app.services.analytics_rollup import backfill_rollups
+    from app.services.analytics_snapshot import build_current, build_overview, build_catalog_stats
+    builders = (build_current, build_overview, build_catalog_stats)
+    expected = [build(session, params, stamp, time.monotonic() + 30) for build in builders]
+    while not backfill_rollups(session, config):
+        session.flush()
+    session.flush()
+    assert [build(session, params, stamp, time.monotonic() + 30) for build in builders] == expected
 
 
 def test_mysql_refresh_coalescing_is_fenced(session):

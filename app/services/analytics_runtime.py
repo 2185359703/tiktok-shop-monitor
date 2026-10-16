@@ -9,14 +9,14 @@ from sqlalchemy import delete, exists, func, inspect, select, text, true
 from sqlalchemy.orm import Session
 
 from app.models import ChangeEvent, Product
-from app.models.analytics_read import ANALYTICS_TABLE_NAMES, AnalyticsRefreshRequest as Job, AnalyticsSnapshot, EventReadModel, ProductReadModel
+from app.models.analytics_read import ANALYTICS_TABLE_NAMES, ROLLUP_TABLE_NAMES, AnalyticsRefreshRequest as Job, AnalyticsSnapshot, EventReadModel, ProductReadModel
 from app.services.analytics_projection import build_event, build_product, publish_event, publish_product
 from app.services.analytics_refresh import VERSION, STAT_KINDS, HEAVY_KINDS, LeaseLost, claim, complete, enqueue, enqueue_many, failed, heartbeat, heavy_slot, job_row, key_for, now, scope
 from app.services.analytics_snapshot import build_snapshot, publish_snapshot
 
 
 def tables_ready(engine):
-    return set(ANALYTICS_TABLE_NAMES).issubset(inspect(engine).get_table_names())
+    return set(ANALYTICS_TABLE_NAMES + ROLLUP_TABLE_NAMES).issubset(inspect(engine).get_table_names())
 
 
 def ready(db, config):

@@ -15,6 +15,7 @@ from app.services.analytics_queries import list_events, list_products, parameter
 from app.services.analytics_refresh import VERSION, enabled, key_for
 from app.services.analytics_runtime import ready, source_reader
 from app.services.analytics_snapshot import Busy, read_snapshot
+from app.storage.async_database import app_call
 
 
 from app.api.async_router import AsyncAPIRouter
@@ -34,13 +35,19 @@ def require_ready(request, db):
         raise HTTPException(503, "analytics_backfill_pending")
 
 
-def snapshot_response(request, kind, options=None, **extra):
+async def snapshot_response(request, kind, options=None, **extra):
     require_enabled(request)
     params = parameters(request.app.state.settings, options, **extra)
-    try:
+    def read():
         with source_reader(request.app.state.factory, write=True) as db:
             require_ready(request, db)
-            status, result = read_snapshot(db, kind, params)
+            return read_snapshot(db, kind, params)
+    try:
+        cache = getattr(request.app.state, "ui_snapshot_cache", None)
+        if cache is None:
+            status, result = await app_call(request, read)
+        else:
+            status, result = await cache.get_or_build(key_for(kind, params), kind, lambda: app_call(request, read))
     except Busy:
         return JSONResponse({"detail": "analytics_busy"}, status_code=429, headers={"Retry-After": "10"})
     return JSONResponse(result, status_code=status, headers={"Cache-Control": "no-store", **({"Retry-After": "2"} if status == 202 else {})})
@@ -69,8 +76,8 @@ def products(request: Request, options: Annotated[dict, Depends(analytics_filter
 
 
 @router.get("/catalog/stats")
-def product_stats(request: Request, options: Annotated[dict, Depends(analytics_filters)]):
-    return snapshot_response(request, "catalog_stats", options)
+async def product_stats(request: Request, options: Annotated[dict, Depends(analytics_filters)]):
+    return await snapshot_response(request, "catalog_stats", options)
 
 
 @router.get("/catalog/shops")
@@ -85,17 +92,17 @@ def shops(request: Request, page: Annotated[int, Query(ge=1)] = 1,
 
 
 @router.get("/analytics/overview")
-def overview(request: Request, lookback_hours: Annotated[int, Query(ge=1, le=720)] = 24):
-    return snapshot_response(request, "overview", lookback_hours=lookback_hours)
+async def overview(request: Request, lookback_hours: Annotated[int, Query(ge=1, le=720)] = 24):
+    return await snapshot_response(request, "overview", lookback_hours=lookback_hours)
 
 
 @router.get("/analytics/workbench")
-def workbench(request: Request, options: Annotated[dict, Depends(analytics_filters)],
+async def workbench(request: Request, options: Annotated[dict, Depends(analytics_filters)],
               lookback_hours: Annotated[int, Query(ge=1, le=720)] = 24,
               topic: Literal["market", "attributes", "stock", "competition", "quality"] = "market"):
     # Themes share one consistent published generation. Only their required fields
     # are sent; changing tabs never launches another full-scope aggregation.
-    response = snapshot_response(request, "workbench", options, lookback_hours=lookback_hours)
+    response = await snapshot_response(request, "workbench", options, lookback_hours=lookback_hours)
     if response.status_code != 200:
         return response
     import json
@@ -123,7 +130,7 @@ def events(request: Request, lookback_hours: Annotated[int, Query(ge=1, le=720)]
 
 
 @router.get("/events/summary")
-def events_summary(request: Request, lookback_hours: Annotated[int, Query(ge=1, le=720)] = 24,
+async def events_summary(request: Request, lookback_hours: Annotated[int, Query(ge=1, le=720)] = 24,
                    event_type: Annotated[str | None, Query(max_length=32)] = None,
                    shop_id: Annotated[int | None, Query(ge=1)] = None, q: Annotated[str | None, Query(max_length=200)] = None,
                    since: datetime | None = None, until: datetime | None = None,
@@ -134,17 +141,17 @@ def events_summary(request: Request, lookback_hours: Annotated[int, Query(ge=1, 
     options = dict(lookback_hours=lookback_hours, event_type=event_type, shop_id=shop_id, q=q,
                    since=since.isoformat() if since else None, until=until.isoformat() if until else None,
                    feed_upper_sequence=feed_upper_sequence)
-    return snapshot_response(request, "events_summary", options)
+    return await snapshot_response(request, "events_summary", options)
 
 
 @router.get("/tasks/summary")
-def tasks_summary(request: Request):
-    return snapshot_response(request, "task_counts")
+async def tasks_summary(request: Request):
+    return await snapshot_response(request, "task_counts")
 
 
 @router.get("/matches/candidates")
-def candidates(request: Request, product_id: Annotated[int | None, Query(ge=1)] = None):
-    return snapshot_response(request, "matching_candidates", {"product_id": product_id})
+async def candidates(request: Request, product_id: Annotated[int | None, Query(ge=1)] = None):
+    return await snapshot_response(request, "matching_candidates", {"product_id": product_id})
 
 
 @router.get("/matches/summary")

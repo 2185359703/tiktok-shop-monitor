@@ -50,7 +50,9 @@ class Release:
             self.environment["APP_IMAGE"] = self.run(["docker", "inspect", "--format", "{{.Config.Image}}", ids[0]])
         else:
             self.environment["APP_IMAGE"] = self.record["previous_images"]["api"][0]
-        self.base_files = [Path(name).resolve() for name in files if name]
+        # The live overlay is a mutable output, never an input to the next release.
+        self.base_files = [Path(name).resolve() for name in files if name and
+                           Path(name).resolve() != self.root / "deployment/live-read-models.json"]
         if not self.base_files or any(not path.is_relative_to(self.root) or not path.is_file() for path in self.base_files):
             raise ValueError("Live Compose files must belong to this project")
         self.base = ["docker", "compose", *[part for path in self.base_files for part in ("-f", str(path))],
@@ -159,7 +161,8 @@ class Release:
             "environment": analysis_env, "volumes": [runtime], "mem_limit": "256m", "cpus": "0.5" if public else "1.0", "restart": "unless-stopped",
             "stop_grace_period": "90s", "logging": {"driver": "json-file", "options": {"max-size": "5m", "max-file": "2"}}}
         services["api-candidate"] = {"image": self.image, "command": ["python", "-m", "scripts.run_api"],
-            "environment": {**analysis_env, "API_HOST": "0.0.0.0", "API_PORT": "8000", "API_TOKEN": "${API_TOKEN:?Set API_TOKEN}", "DB_POOL_TIMEOUT": "3"},
+            "environment": {**analysis_env, "API_HOST": "0.0.0.0", "API_PORT": "8000", "API_TOKEN": "${API_TOKEN:?Set API_TOKEN}",
+                "REDIS_URL": "${REDIS_URL:-redis://redis:6379/0}", "DB_POOL_TIMEOUT": "3"},
             "volumes": [runtime, "report_exports:/opt/tiktok-shop-monitor/data/exports/reports:ro", "collection_state:/opt/tiktok-shop-monitor/data/collections:ro"],
             "ports": ["127.0.0.1:18081:8000"], "mem_limit": "384m", "restart": "unless-stopped"}
         if public:
@@ -168,6 +171,37 @@ class Release:
                 {"type": "bind", "source": str(self.source / "app/services/image_backfill.py"),
                  "target": "/opt/tiktok-shop-monitor/app/services/image_backfill.py", "read_only": True}]}
         self.overlay.write_text(json.dumps({"services": services}, indent=2) + "\n")
+
+    def upgrade(self):
+        """Stage an additive upgrade of an already-enabled read-model deployment."""
+        if self.record.get("phase") in {"warming", "live"}:
+            raise ValueError("Release already staged; use status or cutover")
+        if not self.overlay.is_file() or not self.read("/api/v2/ui/bootstrap").get("ready"):
+            raise ValueError("Upgrade requires an enabled, ready public read model")
+        revision = self.run(["docker", "image", "inspect", "--format", '{{index .Config.Labels "org.opencontainers.image.revision"}}', self.image])
+        if revision != self.commit:
+            raise ValueError("Candidate image does not identify the committed revision")
+        previous = {name: self.containers(name) for name in (*SERVICES, "analytics")}
+        if any(not items or not all(item["State"]["Running"] for item in items) for items in previous.values()):
+            raise ValueError("All existing application roles must be running")
+        if len(previous["worker"]) != 2 or len({item["Image"] for items in previous.values() for item in items}) != 1:
+            raise ValueError("Application roles must have one consistent release and two workers")
+        saved_overlay = self.evidence / "previous-live-overlay.json"
+        shutil.copy2(self.overlay, saved_overlay)
+        saved_overlay.chmod(0o600)
+        api = previous["api"][0]
+        preserved = self.runtime_config(api)
+        networks = list(api["NetworkSettings"]["Networks"])
+        if len(networks) != 1:
+            raise ValueError("Expected one application network")
+        self.save("upgrade_prepared", base_files=[str(path) for path in self.base_files],
+            previous_images={name: [item["Config"]["Image"] for item in items] for name, items in previous.items()},
+            previous_public_overlay=str(saved_overlay), preserved_runtime=preserved)
+        self.run(["docker", "run", "--rm", "--network", networks[0], "--env-file", str(self.root / "deployment.env"),
+            self.image, "python", "-m", "scripts.migrate_analytics_rollups", "--execute"], timeout=60)
+        self.write_overlay(public=False)
+        self.up("analytics", "api-candidate")
+        self.save("warming", public_api_changed=False, source_writers_changed=False)
 
     def prepare(self):
         if self.record.get("phase") in {"warming", "live"}:
@@ -194,7 +228,7 @@ class Release:
             self.stop_sources()
             backup = self.backup_schema_and_control(mysql)
             self.save("backed_up", **backup)
-            for module in ("scripts.migrate_shop_profiles", "scripts.migrate_product_reviews", "scripts.migrate_analytics", "scripts.migrate_ui_indexes"):
+            for module in ("scripts.migrate_shop_profiles", "scripts.migrate_product_reviews", "scripts.migrate_analytics", "scripts.migrate_ui_indexes", "scripts.migrate_analytics_rollups"):
                 result = self.run(["docker", "run", "--rm", "--network", networks[0], "--env-file", str(self.root / "deployment.env"),
                                   "--env", "ANALYTICS_ENABLED=0", self.image, "python", "-m", module, "--execute"])
                 self.save("migrating", migration=module, result=json.loads(result))
@@ -221,6 +255,11 @@ class Release:
             raise ValueError("The public API was changed by another release")
         if not self.read("/api/v2/ui/bootstrap", port=18081)["ready"]:
             raise ValueError("Projection backfill is not ready")
+        if self.record.get("previous_public_overlay"):
+            analysis = self.containers("analytics")[0]
+            status = json.loads(self.run(["docker", "exec", analysis["Id"], "python", "-m", "scripts.analytics_status"]))
+            if not status.get("rollup_backfill", {}).get("ready"):
+                raise ValueError("Incremental summary backfill is not ready")
         for path in ("/api/v2/catalog/products?page_size=2", "/api/v2/catalog/stats", "/api/v2/analytics/overview?lookback_hours=24",
                      "/api/v2/analytics/workbench?lookback_hours=24", "/api/v2/events?limit=2", "/api/v2/reports"):
             result = self.read(path, port=18081, timeout=15)
@@ -273,7 +312,7 @@ def main():
     parser.add_argument("--project-root", type=Path, required=True)
     parser.add_argument("--release-id", required=True)
     parser.add_argument("--commit", required=True)
-    parser.add_argument("--phase", choices=("prepare", "status", "cutover"), required=True)
+    parser.add_argument("--phase", choices=("prepare", "upgrade", "status", "cutover"), required=True)
     args = parser.parse_args()
     release = Release(args.project_root, args.release_id, args.commit)
     if args.phase == "status":

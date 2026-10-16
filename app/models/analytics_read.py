@@ -113,5 +113,16 @@ class AnalyticsSnapshot(Base):
     stale_until: Mapped[datetime] = mapped_column(UTCDateTime(), nullable=False, comment="允许显示旧结果的截止时间")
 
 
+class AnalyticsProductRollup(Base):
+    __tablename__ = "analytics_product_rollups"
+    __table_args__ = ({**TABLE_OPTIONS, "comment": "每128个商品一片的增量统计；与商品投影同事务发布"},)
+    schema_version: Mapped[int] = mapped_column(Integer, primary_key=True, comment="分片统计结构版本")
+    basis: Mapped[str] = mapped_column(String(32), primary_key=True, comment="当前观察或最新有效历史快照口径")
+    shard_id: Mapped[int] = mapped_column(ID_TYPE, primary_key=True, autoincrement=False, comment="商品主键除以128的分片编号")
+    members: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, deferred=True, comment="有界商品贡献；按修订替换以保证幂等")
+    summary: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, comment="按市场及报价上下文隔离的精确统计摘要")
+
+
+ROLLUP_TABLE_NAMES = (AnalyticsProductRollup.__tablename__,)
 ANALYTICS_TABLE_NAMES = tuple(table.__tablename__ for table in (
     ProductReadModel, EventReadModel, AnalyticsRefreshRequest, AnalyticsSnapshot))

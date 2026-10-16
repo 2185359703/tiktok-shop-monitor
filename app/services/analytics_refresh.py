@@ -22,6 +22,12 @@ SCOPE_FIELDS = ("platform", "region", "currency", "pricing_context")
 STAT_KINDS = ("overview", "workbench", "catalog_stats", "events_summary", "task_counts", "matching_candidates")
 LIGHT_KINDS = ("task_counts", "events_summary")
 HEAVY_KINDS = tuple(kind for kind in STAT_KINDS if kind not in LIGHT_KINDS)
+SUMMARY_KINDS = ("overview", "workbench", "catalog_stats")
+
+
+def default_summary_keys(config):
+    return [key_for(kind, {**scope(config), **({"lookback_hours": hours} if hours else {})})
+            for kind in SUMMARY_KINDS for hours in ((24, 168, 720) if kind != "catalog_stats" else (None,))]
 
 
 def enabled(session=None):
@@ -239,7 +245,7 @@ def claim(db, config, *, prefer_statistics=False, slot_name="analysis_slot"):
 
 
 def claim_batch(db, config, *, prefer_statistics=False, slot_name="analysis_slot", batch_size=8,
-                only_kinds=None, exclude_kinds=()):
+                only_kinds=None, exclude_kinds=(), default_statistics=None):
     if not 1 <= batch_size <= 8:
         raise ValueError("analytics_batch_size")
     slot = job_row(db, "control", {**scope(config), "name": slot_name})
@@ -255,6 +261,9 @@ def claim_batch(db, config, *, prefer_statistics=False, slot_name="analysis_slot
             query = query.where(Job.kind.in_(only_kinds))
         if exclude_kinds:
             query = query.where(Job.kind.not_in(exclude_kinds))
+        if default_statistics is not None:
+            keys = default_summary_keys(config)
+            query = query.where(Job.key_hash.in_(keys) if default_statistics else Job.key_hash.not_in(keys))
         if statistics:
             query = query.where(Job.kind.in_(STAT_KINDS), *(Job.parameters[k].as_string() == v for k, v in scope(config).items()))
         else:

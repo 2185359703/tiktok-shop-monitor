@@ -8,8 +8,9 @@ import time
 
 from sqlalchemy.exc import OperationalError
 
-from app.services.analytics_refresh import LIGHT_KINDS, enabled
+from app.services.analytics_refresh import HEAVY_KINDS, LIGHT_KINDS, SUMMARY_KINDS, enabled
 from app.services.analytics_runtime import backfill_batch, maintain, ready, tables_ready
+from app.services.analytics_rollup import backfill_rollups
 from app.services.async_analytics import AsyncAnalyticsRunner
 from app.settings import Settings
 from app.storage.async_database import AsyncDatabase, make_async_engine
@@ -21,7 +22,7 @@ async def run(config, args):
     # Queue mutations need record locks, not repeatable-read gap locks over
     # absent statistic keys. Source aggregation still owns its explicit RR view.
     database = AsyncDatabase(make_async_engine(config.database_url).execution_options(isolation_level="READ COMMITTED"))
-    light_worker = None
+    background_workers = []
     try:
         if not await database.read(lambda db: tables_ready(db.connection())):
             raise ValueError("Run scripts.migrate_analytics --execute before enabling analytics.")
@@ -47,17 +48,28 @@ async def run(config, args):
                     last_maintenance = time.monotonic()
                 processed = await light_runner.run_once(slot_name="analysis_light", only_kinds=LIGHT_KINDS)
                 await pause_until_stop(stop, .1 if processed else 1)
+        async def refresh_heavy_resources(*, summaries=False):
+            heavy_runner = AsyncAnalyticsRunner(database, config)
+            while not stop.is_set():
+                processed = await heavy_runner.run_once(slot_name="analysis_summary" if summaries else "analysis_heavy",
+                    only_kinds=SUMMARY_KINDS if summaries else HEAVY_KINDS, default_statistics=summaries)
+                await pause_until_stop(stop, .1 if processed else 1)
         if not args.once:
-            light_worker = asyncio.create_task(refresh_light_resources())
+            background_workers = [asyncio.create_task(refresh_light_resources()),
+                                  asyncio.create_task(refresh_heavy_resources()),
+                                  asyncio.create_task(refresh_heavy_resources(summaries=True))]
         while not stop.is_set():
-            if light_worker is not None and light_worker.done():
-                await light_worker
+            for worker in background_workers:
+                if worker.done():
+                    await worker
             if time.monotonic() - last_backfill >= 1 or args.once:
                 await database.transaction(backfill_batch, config)
+                await database.transaction(backfill_rollups, config)
                 last_backfill = time.monotonic()
             if args.once:
                 await database.transaction(maintain, config)
-            jobs = await asyncio.gather(*(runner.run_once(exclude_kinds=() if args.once else LIGHT_KINDS)
+            jobs = await asyncio.gather(*(runner.run_once(
+                only_kinds=None if args.once else ("product_projection", "event_projection"))
                                          for _ in range(config.analytics_concurrency)))
             if args.once:
                 print(json.dumps({"processed": any(jobs), "jobs_processed": sum(jobs)}))
@@ -67,9 +79,10 @@ async def run(config, args):
             await pause_until_stop(stop, .001 if any(jobs) else 1)
         return 0
     finally:
-        if light_worker is not None:
-            light_worker.cancel()
-            await asyncio.gather(light_worker, return_exceptions=True)
+        for worker in background_workers:
+            worker.cancel()
+        if background_workers:
+            await asyncio.gather(*background_workers, return_exceptions=True)
         await database.close()
 
 

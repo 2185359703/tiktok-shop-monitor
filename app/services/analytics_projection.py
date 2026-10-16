@@ -201,6 +201,8 @@ def make_product_row(product, data, facts, basis, revision, stamp, *, eligible=T
 
 
 def publish_product(db, config, rows):
+    from app.services.analytics_rollup import update_rollups
+    applied = []
     existing = {(row.basis, row.product_id): row for row in db.scalars(select(ProductReadModel).where(
         ProductReadModel.schema_version == VERSION, tuple_(ProductReadModel.basis, ProductReadModel.product_id)
         .in_([(value["basis"], value["product_id"]) for value in rows])))} if rows else {}
@@ -208,12 +210,14 @@ def publish_product(db, config, rows):
         previous = existing.get((values["basis"], values["product_id"]))
         if previous is not None and previous.applied_revision > values["applied_revision"]:
             continue
+        applied.append(values)
         if previous is None:
             db.add(ProductReadModel(**values))
         else:
             for name, value in values.items():
                 setattr(previous, name, value)
     db.flush()
+    update_rollups(db, applied)
     invalidate_statistics(db, config)
 
 
