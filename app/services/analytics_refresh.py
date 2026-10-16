@@ -20,6 +20,8 @@ VERSION = 2
 LEASE_SECONDS = 60
 SCOPE_FIELDS = ("platform", "region", "currency", "pricing_context")
 STAT_KINDS = ("overview", "workbench", "catalog_stats", "events_summary", "task_counts", "matching_candidates")
+LIGHT_KINDS = ("task_counts", "events_summary")
+HEAVY_KINDS = tuple(kind for kind in STAT_KINDS if kind not in LIGHT_KINDS)
 
 
 def enabled(session=None):
@@ -236,7 +238,8 @@ def claim(db, config, *, prefer_statistics=False, slot_name="analysis_slot"):
     return leases[0] if leases else None
 
 
-def claim_batch(db, config, *, prefer_statistics=False, slot_name="analysis_slot", batch_size=8):
+def claim_batch(db, config, *, prefer_statistics=False, slot_name="analysis_slot", batch_size=8,
+                only_kinds=None, exclude_kinds=()):
     if not 1 <= batch_size <= 8:
         raise ValueError("analytics_batch_size")
     slot = job_row(db, "control", {**scope(config), "name": slot_name})
@@ -248,6 +251,10 @@ def claim_batch(db, config, *, prefer_statistics=False, slot_name="analysis_slot
         query = select(Job).where(Job.schema_version == VERSION, Job.is_pending == true(),
             Job.requested_revision > Job.completed_revision, Job.available_at <= stamp,
             or_(Job.lease_until.is_(None), Job.lease_until <= stamp))
+        if only_kinds is not None:
+            query = query.where(Job.kind.in_(only_kinds))
+        if exclude_kinds:
+            query = query.where(Job.kind.not_in(exclude_kinds))
         if statistics:
             query = query.where(Job.kind.in_(STAT_KINDS), *(Job.parameters[k].as_string() == v for k, v in scope(config).items()))
         else:

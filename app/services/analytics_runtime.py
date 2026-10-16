@@ -11,7 +11,7 @@ from sqlalchemy.orm import Session
 from app.models import ChangeEvent, Product
 from app.models.analytics_read import ANALYTICS_TABLE_NAMES, AnalyticsRefreshRequest as Job, AnalyticsSnapshot, EventReadModel, ProductReadModel
 from app.services.analytics_projection import build_event, build_product, publish_event, publish_product
-from app.services.analytics_refresh import VERSION, STAT_KINDS, LeaseLost, claim, complete, enqueue, enqueue_many, failed, heartbeat, heavy_slot, job_row, key_for, now, scope
+from app.services.analytics_refresh import VERSION, STAT_KINDS, HEAVY_KINDS, LeaseLost, claim, complete, enqueue, enqueue_many, failed, heartbeat, heavy_slot, job_row, key_for, now, scope
 from app.services.analytics_snapshot import build_snapshot, publish_snapshot
 
 
@@ -145,7 +145,7 @@ class AnalyticsRunner:
         thread = threading.Thread(target=renew, daemon=True)
         thread.start()
         try:
-            with (heavy_slot(self.factory, self.config) if lease.kind in STAT_KINDS else nullcontext()), source_reader(
+            with (heavy_slot(self.factory, self.config) if lease.kind in HEAVY_KINDS else nullcontext()), source_reader(
                 self.factory, select_timeout_ms=30000 if lease.kind in STAT_KINDS else 3000
             ) as db:
                 if lease.kind == "product_projection":

@@ -60,7 +60,7 @@ def test_mysql_projection_and_snapshots_preserve_real_snapshot_fields(session, m
     current = list_products(session, parameters(config))
     assert current["items"][0]["variant_count"] == 2
     assert len(current["items"]) == 1
-    for sort in ("price_asc", "stock_desc", "sku_count_asc"):
+    for sort in ("price_asc", "stock_desc", "sku_count_asc", "shop_asc", "shop_desc"):
         assert list_products(session, parameters(config), sort=sort)["items"][0]["id"] == str(product.id)
     assert list_products(session, parameters(config, {"price_unknown": True}), sort="price_asc")["items"] == []
     historical = next(row for row in rows if row["basis"] == "latest_valid_snapshot")["payload"]
@@ -202,3 +202,36 @@ def test_ui_access_indexes_migrate_once_without_changing_columns(mysql_engine):
     assert result == {"ready": True, "executed_statements": 6, "pending_statements": 0, "data_rows_modified": 0}
     assert columns() == before
     assert migrate(mysql_engine, execute=True)["executed_statements"] == 0
+
+
+def test_light_summary_publishes_while_a_heavy_report_holds_the_slot(mysql_engine, monkeypatch):
+    import asyncio
+    from sqlalchemy import delete
+    from app.models.analytics_read import AnalyticsRefreshRequest as Job
+    from app.services.analytics_refresh import LIGHT_KINDS, key_for
+    from app.services.async_analytics import AsyncAnalyticsRunner
+    from app.services.async_heavy_slot import heavy_slot
+    from app.storage.async_database import AsyncDatabase, make_async_engine
+    config = Settings(database_url=mysql_engine.url.render_as_string(hide_password=False), analytics_concurrency=1)
+    params = parameters(config, {"q": "LIGHT SUMMARY FIXTURE"})
+    monkeypatch.setenv("ANALYTICS_ENABLED", "1")
+    async def check():
+        database = AsyncDatabase(make_async_engine(config.database_url))
+        try:
+            await database.transaction(enqueue, "overview", params)
+            await database.transaction(enqueue, "task_counts", params)
+            async with heavy_slot(database, config):
+                assert await AsyncAnalyticsRunner(database, config).run_once(
+                    slot_name="analysis_light", only_kinds=LIGHT_KINDS)
+                payload = await database.read(lambda db: db.get(AnalyticsSnapshot, (2, key_for("task_counts", params))).payload)
+                assert "tasks" in payload
+                assert await database.read(lambda db: db.get(Job, (2, "overview", key_for("overview", params))).is_pending)
+        finally:
+            await database.close()
+    try:
+        asyncio.run(check())
+    finally:
+        with sessionmaker(mysql_engine).begin() as db:
+            keys = [key_for(kind, params) for kind in ("overview", "task_counts")]
+            db.execute(delete(AnalyticsSnapshot).where(AnalyticsSnapshot.key_hash.in_(keys)))
+            db.execute(delete(Job).where(Job.key_hash.in_(keys)))

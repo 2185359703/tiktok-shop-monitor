@@ -7,7 +7,7 @@ from app.services.analytics_runtime import source_reader
 from app.services.analytics_projection import build_event, build_products, publish_event, publish_product
 from app.services.analytics_refresh import LeaseLost, claim_batch, complete_batch, failed_batch, heartbeat_batch
 from app.services.analytics_snapshot import build_snapshots, publish_snapshot
-from app.services.analytics_refresh import STAT_KINDS
+from app.services.analytics_refresh import HEAVY_KINDS, STAT_KINDS
 from app.services.async_heavy_slot import heavy_slot
 
 
@@ -36,16 +36,17 @@ class AsyncAnalyticsRunner:
                     publish_snapshot(session, item.kind, item.parameters, item.revision, data, stamp)
             return publish
 
-    async def run_once(self):
+    async def run_once(self, *, slot_name=None, only_kinds=None, exclude_kinds=()):
         prefer_statistics = self.steps % 8 == 7
-        slot_name = f"analysis_slot:{self.steps % self.config.analytics_concurrency}"
+        slot_name = slot_name or f"analysis_slot:{self.steps % self.config.analytics_concurrency}"
         self.steps += 1
-        leases = await self.database.transaction(claim_batch, self.config, prefer_statistics=prefer_statistics, slot_name=slot_name)
+        leases = await self.database.transaction(claim_batch, self.config, prefer_statistics=prefer_statistics, slot_name=slot_name,
+                                                only_kinds=only_kinds, exclude_kinds=exclude_kinds)
         if not leases:
             return False
         lease = leases[0]
         async def prepare():
-            if lease.kind in STAT_KINDS:
+            if lease.kind in HEAVY_KINDS:
                 async with heavy_slot(self.database, self.config):
                     return await self.database.call(self.build, leases)
             return await self.database.call(self.build, leases)

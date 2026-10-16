@@ -118,6 +118,21 @@ def list_products(db, params, *, page=1, page_size=24, sort="recent"):
         identifiers = db.scalars(select(merged.c.product_id).order_by(merged.c.unknown,
             merged.c.sort_value.desc() if descending else merged.c.sort_value.asc(),
             merged.c.product_id.desc() if descending else merged.c.product_id.asc()).offset(offset).limit(count)).all()
+    elif sort in {"shop_asc", "shop_desc"}:
+        # Rank the small shop directory once; sorting a numeric rank avoids
+        # repeating large collation keys for every product of the same shop.
+        ranks = select(Shop.id.label("shop_id"), func.dense_rank().over(
+            order_by=Shop.canonical_name.desc() if descending else Shop.canonical_name.asc()).label("shop_rank")) \
+            .where(Shop.platform == params["platform"], Shop.region == params["region"]).subquery()
+        if not (set(params) - set(SCOPE_FIELDS)):
+            shop_query = select(P.product_id).select_from(P).join(ranks, ranks.c.shop_id == P.shop_id).where(
+                P.schema_version == VERSION, P.basis == "current", P.eligible == true(),
+                *(getattr(P, key) == params[key] for key in SCOPE_FIELDS)).with_hint(
+                    P, "FORCE INDEX (ix_read_products_catalog)", dialect_name="mysql")
+        else:
+            shop_query = query.join(ranks, ranks.c.shop_id == P.shop_id)
+        identifiers = db.scalars(shop_query.prefix_with("STRAIGHT_JOIN", dialect="mysql")
+            .order_by(ranks.c.shop_rank, tie_break).offset(offset).limit(count)).all()
     else:
         identifiers = db.scalars(query.order_by(*order, tie_break).offset(offset).limit(count)).all()
     # The caller's repeatable-read view keeps both queries consistent. Fetch

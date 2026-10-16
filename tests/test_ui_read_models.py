@@ -7,7 +7,7 @@ from sqlalchemy import event, func, select
 from sqlalchemy.orm import sessionmaker
 
 from app.api.routes_ui_v2 import router
-from app.models import Product
+from app.models import Product, Shop
 from app.models.analytics_read import AnalyticsRefreshRequest as Job, AnalyticsSnapshot, EventReadModel, ProductReadModel
 from app.services.analytics_projection import build_event, build_product, build_products, publish_event, publish_product
 from app.services.analytics_queries import list_events, list_products, parameters
@@ -67,6 +67,22 @@ def test_pages_preserve_unknown_values_at_the_end(analytics_db, sort, expected):
     assert [item["id"] for item in rows] == expected
     field = "price_min" if sort.startswith("price_") else "variant_count" if sort.startswith("sku_count_") else "stock_status"
     assert rows[-1][field] == ("unknown" if field == "stock_status" else None)
+
+
+@pytest.mark.parametrize("sort,distinct,equal", [
+    ("shop_asc", ["1", "3", "2", "4"], ["1", "2", "3", "4"]),
+    ("shop_desc", ["4", "2", "3", "1"], ["4", "3", "2", "1"])])
+def test_shop_rank_paging_keeps_equal_names_in_one_tie_group(analytics_db, sort, distinct, equal):
+    analytics_db.get(Product, 2).shop_id = 2
+    analytics_db.get(Product, 3).shop_id = 1
+    project(analytics_db)
+    def identifiers():
+        return [item["id"] for page in (1, 2) for item in list_products(
+            analytics_db, parameters(Settings()), sort=sort, page=page, page_size=2)["items"]]
+    assert identifiers() == distinct
+    analytics_db.get(Shop, 2).canonical_name = "Alpha"
+    analytics_db.flush()
+    assert identifiers() == equal
 
 
 def test_projection_statistics_preserve_existing_workbench_numbers(analytics_db):

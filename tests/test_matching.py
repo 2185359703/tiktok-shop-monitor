@@ -96,6 +96,20 @@ def test_suggestions_never_write_or_count_as_confirmed(matching_db):
     assert all("40" not in (row["left_product_id"], row["right_product_id"]) for row in response["items"])
 
 
+def test_small_candidate_page_keeps_the_full_candidate_count_and_stable_ranking(matching_db):
+    for identifier in range(50, 60):
+        matching_db.add(Product(id=identifier, shop_id=1, platform="tiktok_shop", region="US", platform_product_id=str(identifier),
+            title="ANRABESS Cotton Ribbed Cardigan", brand="ANRABESS", normalized_category="cardigan",
+            product_url="https://example.test/product/" + str(identifier), last_success_at=NOW,
+            currency="USD", pricing_context="public_listed", color_summary=["Black"], size_summary=["S"]))
+    matching_db.flush()
+    all_candidates = candidate_matches(matching_db, Settings(), limit=100)
+    first = candidate_matches(matching_db, Settings(), limit=1)
+    assert first["items"] == all_candidates["items"][:1]
+    assert first["unconfirmed_candidates"] == all_candidates["unconfirmed_candidates"] == 78
+    assert first["scan"]["evaluated_pairs"] == 78
+
+
 def test_database_pair_and_sku_ownership_constraints_protect_other_write_paths(matching_db):
     match, _, _ = confirm_match(matching_db, Settings(), left_product_id=10, right_product_id=20)
     for left, right in ((10, 10), (20, 10), (10, 20)):

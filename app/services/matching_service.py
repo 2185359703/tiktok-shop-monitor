@@ -1,9 +1,11 @@
 """Human-reviewed matching. Suggestions never create relations or imply SKU identity."""
 
+import heapq
 import re
 import unicodedata
 from datetime import datetime, timezone
 from decimal import Decimal
+from functools import lru_cache
 from itertools import combinations
 
 from sqlalchemy import func, or_, select
@@ -28,11 +30,21 @@ def market_scope(model, settings):
 
 
 def normalize(value):
-    return " ".join(unicodedata.normalize("NFKC", str(value or "")).casefold().split())
+    return _normalized_text(str(value or ""))
+
+
+@lru_cache(maxsize=4096)
+def _normalized_text(value):
+    return " ".join(unicodedata.normalize("NFKC", value).casefold().split())
 
 
 def title_tokens(value):
-    return set(re.findall(r"[^\W_]+", normalize(value))) - STOP_WORDS
+    return _title_tokens(str(value or ""))
+
+
+@lru_cache(maxsize=1024)
+def _title_tokens(value):
+    return frozenset(re.findall(r"[^\W_]+", normalize(value))) - STOP_WORDS
 
 
 def match_evidence(left, right):
@@ -316,8 +328,9 @@ def candidate_matches(session, settings, *, product_id=None, limit=20):
         return {"items": [], "unconfirmed_candidates": 0, "rule_version": RULE_VERSION,
                 "scan": {"scanned_products": len(products), "eligible_products": total, "bounded": total > len(products), "reason": "anchor_details_incomplete"}}
     known = set(session.execute(select(ProductMatch.left_product_id, ProductMatch.right_product_id).where(*market_scope(ProductMatch, settings))).all())
-    pairs = ((anchor, product) for product in products) if anchor is not None else combinations(products, 2)
-    ranked, evaluated = [], 0
+    ordered = sorted(products, key=lambda product: product.id)
+    pairs = ((anchor, product) for product in ordered) if anchor is not None else combinations(ordered, 2)
+    best, evaluated, candidate_count = [], 0, 0
     for first, second in pairs:
         left, right = sorted((first, second), key=lambda item: item.id)
         evaluated += 1
@@ -326,13 +339,22 @@ def candidate_matches(session, settings, *, product_id=None, limit=20):
         confidence, evidence, candidate = match_evidence(left, right)
         if not candidate:
             continue
-        ranked.append({"match_type": "same_product", "status": "suggested", "source": "catalog_rules",
+        candidate_count += 1
+        priority = confidence, -left.id, -right.id
+        if limit <= 0 or len(best) >= limit and priority <= best[0][0]:
+            continue
+        result = {"match_type": "same_product", "status": "suggested", "source": "catalog_rules",
                        "confidence": confidence, "rule_version": RULE_VERSION, "requires_confirmation": True,
                        "left_product_id": str(left.id), "right_product_id": str(right.id),
-                       "left_product": product_summary(left), "right_product": product_summary(right), "evidence": evidence})
+                       "left_product": product_summary(left), "right_product": product_summary(right), "evidence": evidence}
+        if len(best) < limit:
+            heapq.heappush(best, (priority, result))
+        else:
+            heapq.heapreplace(best, (priority, result))
+    ranked = [item[1] for item in best]
     ranked.sort(key=lambda item: (-item["confidence"], int(item["left_product_id"]), int(item["right_product_id"])))
     eligible_other = total - (1 if anchor is not None else 0)
-    return {"items": ranked[:limit], "unconfirmed_candidates": len(ranked), "rule_version": RULE_VERSION,
+    return {"items": ranked, "unconfirmed_candidates": candidate_count, "rule_version": RULE_VERSION,
             "scan": {"scanned_products": len(products), "eligible_products": total, "evaluated_pairs": evaluated,
                      "limit": CANDIDATE_SCAN_LIMIT, "bounded": eligible_other > len(products), "returned_limit": limit,
                      "description": "最近完成详情的商品内建议；尚未完成详情的商品不参与，也不自动确认任何关系。"}}
