@@ -39,8 +39,8 @@ services:
       MYSQL_USER: tiktok_monitor
       MYSQL_PASSWORD: ${MYSQL_PASSWORD:?Set MYSQL_PASSWORD}
       MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:?Set MYSQL_ROOT_PASSWORD}
-    command: ["--character-set-server=utf8mb4", "--collation-server=utf8mb4_0900_ai_ci", "--default-time-zone=+00:00", "--innodb-buffer-pool-size=134217728", "--max-connections=70", "--performance-schema=OFF", "--skip-log-bin"]
-    mem_limit: 640m
+    command: ["--character-set-server=utf8mb4", "--collation-server=utf8mb4_0900_ai_ci", "--default-time-zone=+00:00", "--innodb-buffer-pool-size=536870912", "--max-connections=70", "--performance-schema=OFF", "--skip-log-bin"]
+    mem_limit: 1280m
     volumes: ["mysql_data:/var/lib/mysql"]
     healthcheck:
       test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 --silent"]
