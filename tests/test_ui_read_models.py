@@ -157,6 +157,20 @@ def test_failed_batch_retries_members_individually(analytics_db):
     assert len(retry) == 1
 
 
+def test_busy_statistics_keep_batching_without_recording_source_failures(analytics_db):
+    from app.queue.retry_policy import Failure, TaskFailure
+    for hours in (24, 168, 720):
+        enqueue(analytics_db, "workbench", parameters(Settings(), {"lookback_hours": hours}))
+    leases = claim_batch(analytics_db, Settings(), prefer_statistics=True)
+    failed_batch(analytics_db, leases, TaskFailure(Failure("analytics_heavy_busy", "busy", True, 300)))
+    for lease in leases:
+        row = analytics_db.get(Job, (VERSION, lease.kind, lease.key))
+        assert row.attempts == 0 and row.last_error_code is None and row.is_pending
+        row.available_at = NOW
+    analytics_db.flush()
+    assert len(claim_batch(analytics_db, Settings(), prefer_statistics=True)) == 3
+
+
 @pytest.mark.parametrize("kind", ["workbench", "overview"])
 def test_window_batches_match_independent_statistics_and_keep_filters_isolated(analytics_db, monkeypatch, kind):
     from app.models import ProductSnapshot

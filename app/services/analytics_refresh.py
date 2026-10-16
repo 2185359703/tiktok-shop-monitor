@@ -13,6 +13,7 @@ from sqlalchemy import event, func, or_, select, true, tuple_
 from sqlalchemy.orm import Session
 
 from app.models.analytics_read import AnalyticsRefreshRequest as Job, AnalyticsSnapshot
+from app.queue.retry_policy import TaskFailure
 
 
 VERSION = 2
@@ -155,7 +156,8 @@ def heavy_slot(factory, config):
         row, stamp = job_row(db, "control", parameters), now(db)
         if row.lease_until and row.lease_until > stamp:
             from app.queue.retry_policy import Failure, TaskFailure
-            raise TaskFailure(Failure("analytics_heavy_busy", "已有统计或报告正在生成，稍后重试。", retryable=True, delay_seconds=15))
+            raise TaskFailure(Failure("analytics_heavy_busy", "已有统计或报告正在生成，稍后重试。", retryable=True,
+                                      delay_seconds=config.analytics_build_budget_seconds))
         row.lease_token, row.lease_until = token, stamp + timedelta(seconds=LEASE_SECONDS)
     stopped, lost = threading.Event(), threading.Event()
     def renew():
@@ -309,7 +311,13 @@ def failed(db, lease, error):
 def failed_batch(db, leases, error):
     slot, rows = fenced_batch(db, leases)
     stamp = now(db)
+    busy = isinstance(error, TaskFailure) and error.failure.code == "analytics_heavy_busy"
     for row in rows:
+        if busy:
+            # Another aggregate/report owns the shared slot. Keep these keys
+            # batchable; ordinary contention is not a malformed source retry.
+            row.available_at = stamp + timedelta(seconds=15)
+            continue
         row.attempts += 1
         row.last_error_code = type(error).__name__[:80]
         row.available_at = stamp + timedelta(seconds=min(300, 5 * 2 ** min(row.attempts, 6)))

@@ -18,7 +18,8 @@ async def heavy_slot(database, config):
     def acquire(db):
         row, stamp = job_row(db, "control", parameters), now(db)
         if row.lease_until and row.lease_until > stamp:
-            raise TaskFailure(Failure("analytics_heavy_busy", "已有统计或报告正在生成，稍后重试。", True, 15))
+            raise TaskFailure(Failure("analytics_heavy_busy", "已有统计或报告正在生成，稍后重试。", True,
+                                      config.analytics_build_budget_seconds))
         row.lease_token, row.lease_until = token, stamp + timedelta(seconds=LEASE_SECONDS)
     def owned(db, *, renew=False):
         row, stamp = job_row(db, "control", parameters), now(db)

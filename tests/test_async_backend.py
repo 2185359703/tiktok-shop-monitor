@@ -249,9 +249,10 @@ def test_native_analysis_slots_allow_independent_jobs_and_keep_heavy_slot_exclus
             await database.transaction(failed, second, ValueError())
             monkeypatch.setenv('ANALYTICS_ENABLED', '1')
             async with heavy_slot(database, config):
-                with pytest.raises(TaskFailure):
+                with pytest.raises(TaskFailure) as busy:
                     async with heavy_slot(database, config):
                         pytest.fail('Only one heavy report/aggregate may own the lease')
+                assert busy.value.failure.delay_seconds >= config.analytics_build_budget_seconds
             async with heavy_slot(database, config):
                 pass
         finally:
