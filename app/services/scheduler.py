@@ -17,7 +17,8 @@ READY = (TaskStatus.PENDING, TaskStatus.RETRY_WAITING, TaskStatus.ABANDONED)
 def task_counts(session, settings):
     return session.execute(select(CrawlTask.task_type, CrawlTask.status, func.count()).where(
         CrawlTask.platform == settings.platform, CrawlTask.region == settings.region,
-    ).group_by(CrawlTask.task_type, CrawlTask.status)).all()
+    ).with_hint(CrawlTask, "FORCE INDEX (ix_crawl_tasks_summary)", dialect_name="mysql")
+        .group_by(CrawlTask.task_type, CrawlTask.status)).all()
 
 
 class Scheduler:

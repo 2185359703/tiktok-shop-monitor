@@ -169,9 +169,13 @@ def reports(request: Request, after_id: Annotated[int, Query(ge=0)] = 0,
     config = request.app.state.settings
     with source_reader(request.app.state.factory) as db:
         rows = db.scalars(select(CrawlTask).where(CrawlTask.platform == config.platform, CrawlTask.region == config.region,
-            CrawlTask.task_type == TaskType.REPORT_GENERATION, CrawlTask.id > after_id).order_by(CrawlTask.id).limit(limit + 1)).all()
+            CrawlTask.task_type == TaskType.REPORT_GENERATION, CrawlTask.id > after_id)
+            .with_hint(CrawlTask, "FORCE INDEX (ix_crawl_tasks_summary)", dialect_name="mysql")
+            .order_by(CrawlTask.id).limit(limit + 1)).all()
         latest = db.scalar(select(CrawlTask).where(CrawlTask.platform == config.platform, CrawlTask.region == config.region,
-            CrawlTask.task_type == TaskType.REPORT_GENERATION, CrawlTask.status == "succeeded").order_by(CrawlTask.id.desc()).limit(1))
+            CrawlTask.task_type == TaskType.REPORT_GENERATION, CrawlTask.status == "succeeded")
+            .with_hint(CrawlTask, "FORCE INDEX (ix_crawl_tasks_summary)", dialect_name="mysql")
+            .order_by(CrawlTask.id.desc()).limit(1))
         archive = {**task_summary(latest), "summary": (latest.checkpoint or {}).get("report_summary"),
                    "report_as_of": (latest.checkpoint or {}).get("report_as_of"),
                    "lookback_hours": (latest.payload or {}).get("lookback_hours", 24)} if latest else None

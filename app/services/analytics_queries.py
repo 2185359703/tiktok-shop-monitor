@@ -93,16 +93,17 @@ def list_products(db, params, *, page=1, page_size=24, sort="recent"):
     if not (set(params) - set(SCOPE_FIELDS)):
         # Scope columns are correlated; MySQL can underestimate their combined
         # selectivity and switch back to a catalog filesort on the second page.
-        query = query.with_hint(P, "FORCE INDEX (ix_read_products_catalog)", dialect_name="mysql")
-    page_ids = query.order_by(*order, tie_break).offset((page - 1) * page_size).limit(page_size + 1).subquery()
-    # Sort narrow IDs first. Otherwise MySQL can carry every JSON payload into
-    # its filesort even though only one page of payloads will be returned.
-    rows = db.execute(select(P.payload, Shop.canonical_name).join(Shop, Shop.id == P.shop_id)
-        .join(page_ids, page_ids.c.page_product_id == P.product_id)
-        .where(P.schema_version == VERSION, P.basis == "current")
-        .order_by(*order, tie_break)).all()
-    return {"items": [{**payload, "shop_name": name} for payload, name in rows[:page_size]],
-            "page": page, "page_size": page_size, "has_more": len(rows) > page_size,
+        index = "ix_read_products_recent" if sort == "recent" else "ix_read_products_catalog"
+        query = query.with_hint(P, f"FORCE INDEX ({index})", dialect_name="mysql")
+    identifiers = db.scalars(query.order_by(*order, tie_break)
+        .offset((page - 1) * page_size).limit(page_size + 1)).all()
+    # The caller's repeatable-read view keeps both queries consistent. Fetch
+    # payloads by primary key after sorting; never filesort the JSON values.
+    rows = db.execute(select(P.product_id, P.payload, Shop.canonical_name).join(Shop, Shop.id == P.shop_id)
+        .where(P.schema_version == VERSION, P.basis == "current", P.product_id.in_(identifiers[:page_size]))).all() if identifiers else []
+    by_id = {identifier: {**payload, "shop_name": name} for identifier, payload, name in rows}
+    return {"items": [by_id[identifier] for identifier in identifiers[:page_size] if identifier in by_id],
+            "page": page, "page_size": page_size, "has_more": len(identifiers) > page_size,
             "total": None, "total_pages": None, "scope": params, "field_coverage": [], "image_readiness": True}
 
 

@@ -90,6 +90,8 @@ CREATE INDEX ix_crawl_tasks_lease ON crawl_tasks (status, lease_expires_at);
 
 CREATE INDEX ix_crawl_tasks_resource ON crawl_tasks (platform, region, resource_type, resource_id);
 
+CREATE INDEX ix_crawl_tasks_summary ON crawl_tasks (platform, region, task_type, status, id);
+
 CREATE TABLE IF NOT EXISTS event_read_models (
 	schema_version INTEGER NOT NULL COMMENT '派生结构版本',
 	event_id BIGINT UNSIGNED NOT NULL COMMENT '源事件主键',

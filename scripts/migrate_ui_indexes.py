@@ -1,18 +1,19 @@
-"""Add two covering indexes online; never modify columns or business rows."""
+"""Add covering indexes online; never modify columns or business rows."""
 
 import argparse
 import json
 
 from sqlalchemy import inspect, text
 
-from app.models import Product
+from app.models import CrawlTask, Product
 from app.models.analytics_read import ProductReadModel
 from app.storage.database import make_engine
 from app.storage.schema import require_supported_server
 
 
 INDEXES = tuple(next(index for index in model.__table__.indexes if index.name == name) for model, name in (
-    (ProductReadModel, "ix_read_products_catalog"), (Product, "ix_products_recent_detail")))
+    (ProductReadModel, "ix_read_products_catalog"), (Product, "ix_products_recent_detail"),
+    (CrawlTask, "ix_crawl_tasks_summary")))
 LOCK_NAME = "tiktok_ui_read_indexes"
 
 

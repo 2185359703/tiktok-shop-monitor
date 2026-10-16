@@ -23,6 +23,7 @@ class CrawlTask(PrimaryKeyMixin, MarketMixin, TimestampMixin, Base):
         Index("ix_crawl_tasks_dispatch", "status", "available_at", "priority"),
         Index("ix_crawl_tasks_resource", "platform", "region", "resource_type", "resource_id"),
         Index("ix_crawl_tasks_lease", "status", "lease_expires_at"),
+        Index("ix_crawl_tasks_summary", "platform", "region", "task_type", "status", "id"),
         CheckConstraint("priority >= 0 AND priority <= 9", name="priority"),
         CheckConstraint("attempt_count >= 0", name="attempt_count"),
         CheckConstraint("max_attempts >= 1", name="max_attempts"),

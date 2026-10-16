@@ -42,8 +42,10 @@ def test_list_has_no_aggregate_and_counts_only_observed_skus(analytics_db):
     assert [item["id"] for item in result["items"]] == ["1", "2"]
     assert result["items"][0]["variant_count"] == 2
     assert result["total"] is None and result["has_more"]
-    assert len(statements) == 1
-    assert not any(word in statements[0] for word in ("product_variants", "product_snapshots", "count(", "group by"))
+    assert len(statements) <= 2
+    assert "payload" not in statements[0].split("from")[0]
+    assert not any(word in statement for statement in statements
+                   for word in ("product_variants", "product_snapshots", "count(", "group by"))
     assert list_products(analytics_db, parameters(Settings(), {"attribute": "color", "value": "Red"}))["items"]
 
 
