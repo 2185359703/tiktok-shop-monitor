@@ -78,6 +78,8 @@ API 配置 `REDIS_URL` 时缓存统计响应，最多保留 32 个键、每键 2
 
 前端模块和样式使用固定版本 esbuild 合并，运行时不需要 Node.js。修改前端源文件后运行 `npm ci --ignore-scripts`、`npm run build:frontend`，并提交生成的 bundle 和 `build-manifest.json`；测试会检查源文件与产物哈希。页面在脚本下载期间就请求 bootstrap，小尺寸 Logo 保留原来的显示尺寸与图案，减少启动链路和传输量。
 
+HTTPS 入口通过 `deployment/enable_ui_http2.py --project-root /opt/tiktok-shop-monitor --execute` 启用 HTTP/2。脚本只接受已存在且仅属于 ShopScope 域名的站点文件，保存原配置、校验 Nginx 后平滑重载；不改证书、路由或其他站点配置。首次 bootstrap 位于样式表之前，避免等待 CSS 才开始请求。
+
 当前 4 GiB 服务器的 MySQL 容器上限为 1280 MiB，缓冲池为 512 MiB；此前 1 GiB 上限造成了持续内存回收。`deployment/tune_mysql_cache.py --project-root /opt/tiktok-shop-monitor --execute` 会验证项目归属、备份并更新 Compose 配置，再热调整容器上限，避免下次部署恢复旧值。该操作不重启 MySQL。
 
 以下测试使用内存数据库或专用本地 MySQL 测试库，不允许把业务库赋给 `MYSQL_TEST_URL`：
