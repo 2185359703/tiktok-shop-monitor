@@ -10,7 +10,7 @@ from sqlalchemy.exc import OperationalError
 
 from app.services.analytics_refresh import HEAVY_KINDS, LIGHT_KINDS, SUMMARY_KINDS, enabled
 from app.services.analytics_runtime import backfill_batch, maintain, ready, tables_ready
-from app.services.analytics_rollup import backfill_rollups
+from app.services.analytics_rollup import backfill_rollups, rollups_ready
 from app.services.async_analytics import AsyncAnalyticsRunner
 from app.settings import Settings
 from app.storage.async_database import AsyncDatabase, make_async_engine
@@ -51,6 +51,9 @@ async def run(config, args):
         async def refresh_heavy_resources(*, summaries=False):
             heavy_runner = AsyncAnalyticsRunner(database, config)
             while not stop.is_set():
+                if summaries and not await database.read(rollups_ready, config):
+                    await pause_until_stop(stop, 1)
+                    continue
                 processed = await heavy_runner.run_once(slot_name="analysis_summary" if summaries else "analysis_heavy",
                     only_kinds=SUMMARY_KINDS if summaries else HEAVY_KINDS, default_statistics=summaries)
                 await pause_until_stop(stop, .1 if processed else 1)

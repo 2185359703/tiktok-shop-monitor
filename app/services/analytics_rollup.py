@@ -265,8 +265,11 @@ def backfill_rollups(db, config):
     if not identifiers:
         control.parameters = {**state, "ready": True}
         return True
-    rows = db.scalars(select(P).options(undefer(P.facts)).where(P.schema_version == VERSION,
-        P.product_id.in_(identifiers))).all()
+    # The primary key is (schema_version, basis, product_id). Supplying only
+    # schema_version + product_id makes MySQL scan every basis on every batch.
+    rows = [row for basis in ("current", "latest_valid_snapshot") for row in db.scalars(
+        select(P).options(undefer(P.facts)).where(P.schema_version == VERSION, P.basis == basis,
+            P.product_id.in_(identifiers)).with_hint(P, "FORCE INDEX (PRIMARY)", dialect_name="mysql"))]
     update_rollups(db, [{column.name: getattr(row, column.name) for column in P.__table__.columns} for row in rows])
     control.parameters = {**state, "after": identifiers[-1]}
     return False
