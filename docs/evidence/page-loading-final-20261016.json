@@ -1,0 +1,488 @@
+{
+  "date": "2026-10-16",
+  "timezone": "UTC",
+  "code_revision": "82e27858480a02761e10b5a5e4633546c8b2ca75",
+  "release_id": "frontend-20261016-bootstrap-82e2785",
+  "archive_sha256": "54e7dd11cd509050bb09801cd47c19f8793d1098e65db5e63e8608e2c8da9173",
+  "public_url": "https://shopscope-monitor.top/",
+  "tests": {
+    "full_regression": {
+      "passed": 653,
+      "skipped": 2,
+      "failed": 0,
+      "skip_reason": "Redis-dependent infrastructure checks require a separate test Redis"
+    },
+    "frontend_query_cache": {
+      "passed": 7,
+      "failed": 0
+    }
+  },
+  "isolated_benchmark": "page-loading-rollups-local-20261016.json",
+  "steady_collection_observations_before_final_bootstrap_update": [
+    {
+      "at_utc": "2026-10-16 13:45:05.251360",
+      "default_charts": [
+        {
+          "kind": "catalog_stats",
+          "hours": null,
+          "age_seconds": 25,
+          "build_seconds": 18.267251
+        },
+        {
+          "kind": "overview",
+          "hours": 24,
+          "age_seconds": 65,
+          "build_seconds": 8.700117
+        },
+        {
+          "kind": "workbench",
+          "hours": 168,
+          "age_seconds": 50,
+          "build_seconds": 23.212694
+        },
+        {
+          "kind": "overview",
+          "hours": 720,
+          "age_seconds": 65,
+          "build_seconds": 8.776514
+        },
+        {
+          "kind": "workbench",
+          "hours": 24,
+          "age_seconds": 50,
+          "build_seconds": 23.250684
+        },
+        {
+          "kind": "workbench",
+          "hours": 720,
+          "age_seconds": 50,
+          "build_seconds": 23.55829
+        },
+        {
+          "kind": "overview",
+          "hours": 168,
+          "age_seconds": 65,
+          "build_seconds": 9.193014
+        }
+      ],
+      "oldest_seconds": 4,
+      "pending_products": 2,
+      "latest_attempt_started_at": "2026-10-16 13:45:04.944691"
+    },
+    {
+      "at_utc": "2026-10-16 13:45:36.458858",
+      "default_charts": [
+        {
+          "kind": "catalog_stats",
+          "hours": null,
+          "age_seconds": 56,
+          "build_seconds": 18.267251
+        },
+        {
+          "kind": "overview",
+          "hours": 24,
+          "age_seconds": 35,
+          "build_seconds": 10.44467
+        },
+        {
+          "kind": "workbench",
+          "hours": 168,
+          "age_seconds": 81,
+          "build_seconds": 23.212694
+        },
+        {
+          "kind": "overview",
+          "hours": 720,
+          "age_seconds": 35,
+          "build_seconds": 10.485815
+        },
+        {
+          "kind": "workbench",
+          "hours": 24,
+          "age_seconds": 81,
+          "build_seconds": 23.250684
+        },
+        {
+          "kind": "workbench",
+          "hours": 720,
+          "age_seconds": 81,
+          "build_seconds": 23.55829
+        },
+        {
+          "kind": "overview",
+          "hours": 168,
+          "age_seconds": 35,
+          "build_seconds": 10.719488
+        }
+      ],
+      "oldest_seconds": 1,
+      "pending_products": 1,
+      "latest_attempt_started_at": "2026-10-16 13:45:35.938214"
+    },
+    {
+      "at_utc": "2026-10-16 13:46:09.720608",
+      "default_charts": [
+        {
+          "kind": "catalog_stats",
+          "hours": null,
+          "age_seconds": 22,
+          "build_seconds": 20.787509
+        },
+        {
+          "kind": "overview",
+          "hours": 24,
+          "age_seconds": 68,
+          "build_seconds": 10.44467
+        },
+        {
+          "kind": "workbench",
+          "hours": 168,
+          "age_seconds": 53,
+          "build_seconds": 26.320867
+        },
+        {
+          "kind": "overview",
+          "hours": 720,
+          "age_seconds": 68,
+          "build_seconds": 10.485815
+        },
+        {
+          "kind": "workbench",
+          "hours": 24,
+          "age_seconds": 53,
+          "build_seconds": 26.489681
+        },
+        {
+          "kind": "workbench",
+          "hours": 720,
+          "age_seconds": 53,
+          "build_seconds": 27.572663
+        },
+        {
+          "kind": "overview",
+          "hours": 168,
+          "age_seconds": 68,
+          "build_seconds": 10.719488
+        }
+      ],
+      "oldest_seconds": 3,
+      "pending_products": 2,
+      "latest_attempt_started_at": "2026-10-16 13:46:08.494515"
+    },
+    {
+      "at_utc": "2026-10-16 13:46:40.226114",
+      "default_charts": [
+        {
+          "kind": "catalog_stats",
+          "hours": null,
+          "age_seconds": 53,
+          "build_seconds": 20.787509
+        },
+        {
+          "kind": "overview",
+          "hours": 24,
+          "age_seconds": 31,
+          "build_seconds": 7.779114
+        },
+        {
+          "kind": "workbench",
+          "hours": 168,
+          "age_seconds": 84,
+          "build_seconds": 26.320867
+        },
+        {
+          "kind": "overview",
+          "hours": 720,
+          "age_seconds": 31,
+          "build_seconds": 7.800328
+        },
+        {
+          "kind": "workbench",
+          "hours": 24,
+          "age_seconds": 84,
+          "build_seconds": 26.489681
+        },
+        {
+          "kind": "workbench",
+          "hours": 720,
+          "age_seconds": 84,
+          "build_seconds": 27.572663
+        },
+        {
+          "kind": "overview",
+          "hours": 168,
+          "age_seconds": 31,
+          "build_seconds": 8.015968
+        }
+      ],
+      "oldest_seconds": 0,
+      "pending_products": 0,
+      "latest_attempt_started_at": "2026-10-16 13:46:39.209886"
+    },
+    {
+      "at_utc": "2026-10-16 13:47:10.961468",
+      "default_charts": [
+        {
+          "kind": "catalog_stats",
+          "hours": null,
+          "age_seconds": 20,
+          "build_seconds": 20.448477
+        },
+        {
+          "kind": "overview",
+          "hours": 24,
+          "age_seconds": 61,
+          "build_seconds": 7.779114
+        },
+        {
+          "kind": "workbench",
+          "hours": 168,
+          "age_seconds": 52,
+          "build_seconds": 28.487653
+        },
+        {
+          "kind": "overview",
+          "hours": 720,
+          "age_seconds": 61,
+          "build_seconds": 7.800328
+        },
+        {
+          "kind": "workbench",
+          "hours": 24,
+          "age_seconds": 52,
+          "build_seconds": 28.571816
+        },
+        {
+          "kind": "workbench",
+          "hours": 720,
+          "age_seconds": 52,
+          "build_seconds": 29.737869
+        },
+        {
+          "kind": "overview",
+          "hours": 168,
+          "age_seconds": 61,
+          "build_seconds": 8.015968
+        }
+      ],
+      "oldest_seconds": 2,
+      "pending_products": 3,
+      "latest_attempt_started_at": "2026-10-16 13:47:09.717876"
+    }
+  ],
+  "redis_read_through": {
+    "response_status": 200,
+    "response_bytes": 129461,
+    "loopback_ms": 540.84,
+    "redis_cached_bytes": 129467,
+    "redis_ttl_seconds": 3,
+    "redis_used_memory_bytes": 1848328,
+    "redis_memory_limit_bytes": 67108864
+  },
+  "memory_change": {
+    "mode": "execute",
+    "buffer_pool_before_bytes": 536870912,
+    "buffer_pool_after_bytes": 536870912,
+    "target_bytes": 536870912,
+    "container_memory_before_bytes": 1073741824,
+    "container_memory_limit_bytes": 1342177280,
+    "compose_updated": true,
+    "compose_backup": "/opt/tiktok-shop-monitor/data/samples/deployment/mysql-memory-before-1792146349151914335.yml",
+    "active_statement_states": [
+      "Query\t1\texecuting",
+      "Daemon\t169468\tWaiting on empty queue"
+    ],
+    "schema_or_data_writes": 0,
+    "server_restarted": false
+  },
+  "browser": {
+    "pages": [
+      "workbench",
+      "overview",
+      "products",
+      "shops",
+      "matches",
+      "events",
+      "tasks",
+      "reports"
+    ],
+    "product_pagination": true,
+    "product_details": true,
+    "attributes_theme": true,
+    "page_errors": 0,
+    "api_errors": 0,
+    "fonts": "loaded",
+    "viewport": [
+      1440,
+      960
+    ],
+    "transport": "h2",
+    "first_data_dom_samples_ms": [
+      5250,
+      13129,
+      7186,
+      6689
+    ],
+    "first_useful_content_target_met": false,
+    "initial_workbench_products": 46901,
+    "bootstrap_origin_warm_samples_ms": [
+      289.96,
+      276.09,
+      404.25
+    ],
+    "bootstrap_origin_cold_sample_ms": 1005.8,
+    "cached_dom_ms": 153,
+    "cached_paint_ms": 122,
+    "cached_measurement": "Direct click-to-DOM/next-animation-frame timing on the deployed frontend; earlier Playwright action overhead was excluded.",
+    "local_screenshot": "output/playwright/shopscope-performance-final.png"
+  },
+  "limits": [
+    "The local 50000-product benchmark is synthetic and is not a production load test.",
+    "Browser measurements include network and client time; cache misses on the shared VPS can be slower than warmed reads.",
+    "The cross-network first useful content target of 1–2 seconds remains unmet. Observed startup samples range from 5.25 to 13.129 seconds."
+  ],
+  "production_health": {
+    "services": [
+      {
+        "service": "api",
+        "image": "tiktok-shop-monitor:frontend-20261016-bootstrap-82e2785",
+        "status": "running",
+        "restarts": "0",
+        "oom": "false",
+        "nano_cpus": "0",
+        "memory_bytes": "402653184"
+      },
+      {
+        "service": "worker",
+        "image": "tiktok-shop-monitor:frontend-20261016-bootstrap-82e2785",
+        "status": "running",
+        "restarts": "0",
+        "oom": "false",
+        "nano_cpus": "0",
+        "memory_bytes": "335544320"
+      },
+      {
+        "service": "worker",
+        "image": "tiktok-shop-monitor:frontend-20261016-bootstrap-82e2785",
+        "status": "running",
+        "restarts": "0",
+        "oom": "false",
+        "nano_cpus": "0",
+        "memory_bytes": "335544320"
+      },
+      {
+        "service": "collection",
+        "image": "tiktok-shop-monitor:frontend-20261016-bootstrap-82e2785",
+        "status": "running",
+        "restarts": "0",
+        "oom": "false",
+        "nano_cpus": "0",
+        "memory_bytes": "268435456"
+      },
+      {
+        "service": "scheduler",
+        "image": "tiktok-shop-monitor:frontend-20261016-bootstrap-82e2785",
+        "status": "running",
+        "restarts": "0",
+        "oom": "false",
+        "nano_cpus": "0",
+        "memory_bytes": "201326592"
+      },
+      {
+        "service": "analytics-summaries",
+        "image": "tiktok-shop-monitor:frontend-20261016-bootstrap-82e2785",
+        "status": "running",
+        "restarts": "0",
+        "oom": "false",
+        "nano_cpus": "600000000",
+        "memory_bytes": "268435456"
+      },
+      {
+        "service": "analytics",
+        "image": "tiktok-shop-monitor:frontend-20261016-bootstrap-82e2785",
+        "status": "running",
+        "restarts": "0",
+        "oom": "false",
+        "nano_cpus": "250000000",
+        "memory_bytes": "201326592"
+      },
+      {
+        "service": "analytics-heavy",
+        "image": "tiktok-shop-monitor:frontend-20261016-bootstrap-82e2785",
+        "status": "running",
+        "restarts": "0",
+        "oom": "false",
+        "nano_cpus": "150000000",
+        "memory_bytes": "268435456"
+      },
+      {
+        "service": "rabbitmq",
+        "image": "rabbitmq:4.1-management",
+        "status": "running",
+        "restarts": "0",
+        "oom": "false",
+        "nano_cpus": "0",
+        "memory_bytes": "335544320"
+      },
+      {
+        "service": "redis",
+        "image": "redis:7.4-alpine",
+        "status": "running",
+        "restarts": "0",
+        "oom": "false",
+        "nano_cpus": "0",
+        "memory_bytes": "134217728"
+      },
+      {
+        "service": "mysql",
+        "image": "mysql:8.0.43",
+        "status": "running",
+        "restarts": "0",
+        "oom": "false",
+        "nano_cpus": "0",
+        "memory_bytes": "1342177280"
+      }
+    ],
+    "api_ready": {
+      "status": "ok",
+      "database": "reachable",
+      "collection_enabled": true
+    }
+  },
+  "production_deployed": true,
+  "phase": "live",
+  "final_freshness_observations": [
+    {
+      "at_utc": "2026-10-16 14:56:32.165450",
+      "pending_products": 4,
+      "oldest_seconds": 8,
+      "default_chart_max_age_seconds": 66,
+      "latest_attempt_started_at": "2026-10-16 14:56:31.445546"
+    },
+    {
+      "at_utc": "2026-10-16 14:57:05.219340",
+      "pending_products": 5,
+      "oldest_seconds": 7,
+      "default_chart_max_age_seconds": 68,
+      "latest_attempt_started_at": "2026-10-16 14:57:03.754450"
+    },
+    {
+      "at_utc": "2026-10-16 14:57:36.998622",
+      "pending_products": 6,
+      "oldest_seconds": 6,
+      "default_chart_max_age_seconds": 68,
+      "latest_attempt_started_at": "2026-10-16 14:57:36.679712"
+    }
+  ],
+  "preserved_runtime": {
+    "worker_count": 2,
+    "worker_concurrency_each": 4,
+    "source_minimum_interval_seconds": 1,
+    "infrastructure_recreated": false
+  },
+  "additive_migrations": [
+    "010_analytics_rollups.sql",
+    "011_ui_recent_index.sql"
+  ],
+  "measurement_boundary": "The post-release freshness samples were collected with the MySQL client on the host, avoiding an extra Python process in the quota-limited projection container."
+}
