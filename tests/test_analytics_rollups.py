@@ -8,7 +8,7 @@ from sqlalchemy import delete, event
 from app.models import Product, Shop
 from app.models.analytics_read import AnalyticsProductRollup
 from app.services.analytics_projection import build_product, publish_product
-from app.services.analytics_queries import parameters
+from app.services.analytics_queries import list_products, parameters
 from app.services.analytics_refresh import SUMMARY_KINDS, claim_batch, enqueue, job_row
 from app.services.analytics_rollup import backfill_rollups, control_params, read_totals, rollups_ready, update_rollups
 from app.services.analytics_snapshot import build_catalog_stats, build_current, build_overview
@@ -33,7 +33,11 @@ def results(db, stamp=NOW):
 def test_rollups_equal_full_scan_and_do_not_read_product_json(analytics_db):
     project(analytics_db)
     expected = results(analytics_db)
+    filters = [{"attribute": "color", "value": "Red"}, {"attribute": "size", "value": "S"},
+               {"attribute": "brand", "value": "Brand B"}, {"attribute": "material", "value": "Cotton"}]
+    pages = [list_products(analytics_db, parameters(Settings(), options)) for options in filters]
     enable(analytics_db)
+    assert [list_products(analytics_db, parameters(Settings(), options)) for options in filters] == pages
     statements = []
     def capture(conn, cursor, statement, *args):
         statements.append(statement.lower())

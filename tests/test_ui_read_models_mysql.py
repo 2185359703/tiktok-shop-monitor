@@ -77,11 +77,14 @@ def test_mysql_projection_and_snapshots_preserve_real_snapshot_fields(session, m
     from app.services.analytics_rollup import backfill_rollups
     from app.services.analytics_snapshot import build_current, build_overview, build_catalog_stats
     builders = (build_current, build_overview, build_catalog_stats)
+    color_params = parameters(config, {"attribute": "color", "value": product.color_summary[0]})
+    expected_color = list_products(session, color_params)
     expected = [build(session, params, stamp, time.monotonic() + 30) for build in builders]
     while not backfill_rollups(session, config):
         session.flush()
     session.flush()
     assert [build(session, params, stamp, time.monotonic() + 30) for build in builders] == expected
+    assert list_products(session, color_params) == expected_color
 
 
 def test_mysql_refresh_coalescing_is_fenced(session):

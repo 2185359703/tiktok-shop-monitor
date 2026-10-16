@@ -123,6 +123,20 @@ class AnalyticsProductRollup(Base):
     summary: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, comment="按市场及报价上下文隔离的精确统计摘要")
 
 
-ROLLUP_TABLE_NAMES = (AnalyticsProductRollup.__tablename__,)
+class ProductReadAttribute(Base):
+    __tablename__ = "product_read_attributes"
+    __table_args__ = (
+        Index("ix_read_attribute_value", "schema_version", "basis", "attribute", "value", "product_id", mysql_length={"value": 128}),
+        {**TABLE_OPTIONS, "comment": "商品属性筛选索引；保留原始标签的SQL比较语义"},
+    )
+    schema_version: Mapped[int] = mapped_column(Integer, primary_key=True, comment="商品投影结构版本")
+    basis: Mapped[str] = mapped_column(String(32), primary_key=True, comment="商品观察口径")
+    product_id: Mapped[int] = mapped_column(ID_TYPE, primary_key=True, autoincrement=False, comment="源商品主键")
+    attribute: Mapped[str] = mapped_column(String(16), primary_key=True, comment="颜色尺码及服装属性维度")
+    ordinal: Mapped[int] = mapped_column(Integer, primary_key=True, comment="该商品该维度的标签序号")
+    value: Mapped[str] = mapped_column(Text, nullable=False, comment="去除首尾空格的来源标签；不合并同义词")
+
+
+ROLLUP_TABLE_NAMES = (AnalyticsProductRollup.__tablename__, ProductReadAttribute.__tablename__)
 ANALYTICS_TABLE_NAMES = tuple(table.__tablename__ for table in (
     ProductReadModel, EventReadModel, AnalyticsRefreshRequest, AnalyticsSnapshot))

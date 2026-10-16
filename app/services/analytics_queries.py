@@ -5,11 +5,12 @@ import json
 from datetime import datetime, timedelta
 from decimal import Decimal
 from itertools import groupby
+from types import SimpleNamespace
 
 from sqlalchemy import and_, func, literal, or_, select, true, union_all
 
 from app.models import Shop
-from app.models.analytics_read import AnalyticsRefreshRequest, EventReadModel as E, ProductReadModel as P
+from app.models.analytics_read import AnalyticsRefreshRequest, EventReadModel as E, ProductReadModel as P, ProductReadAttribute as Attribute
 from app.services.analytics_refresh import SCOPE_FIELDS, VERSION, key_for, now, scope
 
 
@@ -28,7 +29,7 @@ def parameters(config, options=None, **extra):
     return json.loads(json.dumps(values, default=str))
 
 
-def product_conditions(params, basis="current"):
+def product_conditions(params, basis="current", *, indexed_attribute=False):
     clauses = [P.schema_version == VERSION, P.basis == basis, P.eligible == true(),
                *(getattr(P, k) == params[k] for k in ("platform", "region", "currency", "pricing_context")),
                Shop.platform == params["platform"], Shop.region == params["region"]]
@@ -48,7 +49,7 @@ def product_conditions(params, basis="current"):
         clauses.append(P.price_min.is_(None) if params["price_unknown"] else P.price_min.is_not(None))
     if params.get("stock"):
         clauses.append(P.stock_status == params["stock"])
-    if params.get("attribute"):
+    if params.get("attribute") and not indexed_attribute:
         attribute, value = params["attribute"], params["value"]
         if attribute in {"color", "size"}:
             # JSON membership retains exact labels; SQL dialect handling is in the caller.
@@ -59,8 +60,17 @@ def product_conditions(params, basis="current"):
 
 
 def product_query(db, params, basis="current"):
-    query = select(P, Shop.canonical_name).join(Shop, Shop.id == P.shop_id).where(*product_conditions(params, basis))
-    if params.get("attribute") in {"color", "size"}:
+    indexed = False
+    if params.get("attribute"):
+        from app.services.analytics_rollup import rollups_ready
+        indexed = rollups_ready(db, SimpleNamespace(**{key: params[key] for key in SCOPE_FIELDS}))
+    query = select(P, Shop.canonical_name).join(Shop, Shop.id == P.shop_id).where(
+        *product_conditions(params, basis, indexed_attribute=indexed))
+    if indexed:
+        matching = select(Attribute.product_id).where(Attribute.schema_version == VERSION, Attribute.basis == basis,
+            Attribute.attribute == params["attribute"], Attribute.value == params["value"])
+        query = query.where(P.product_id.in_(matching))
+    elif params.get("attribute") in {"color", "size"}:
         column = P.payload["color_summary" if params["attribute"] == "color" else "size_summary"]
         # Reuse the dialect's JSON table helper; filter before LIMIT, never in Python after pagination.
         from app.services.analytics_service import json_values

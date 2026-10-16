@@ -111,17 +111,18 @@ def measure(factory, config, args):
     os.environ["ANALYTICS_ENABLED"] = "1"
     with TestClient(create_app(config)) as client:
         for path in paths:
-            durations, sizes = [], []
+            durations, sizes, statuses = [], [], []
             for _ in range(args.samples):
                 started = time.perf_counter()
                 response = client.get(path)
                 durations.append((time.perf_counter() - started) * 1000)
                 sizes.append(len(response.content))
+                statuses.append(response.status_code)
                 if response.status_code != 200:
-                    raise AssertionError(f"{path} returned {response.status_code}")
+                    break
             ordered = sorted(durations)
-            measurements[path] = dict(samples=args.samples, p50_ms=round(ordered[len(ordered) // 2], 2),
-                p95_ms=round(ordered[math.ceil(len(ordered) * .95) - 1], 2), max_bytes=max(sizes))
+            measurements[path] = dict(samples=len(statuses), p50_ms=round(ordered[len(ordered) // 2], 2),
+                p95_ms=round(ordered[math.ceil(len(ordered) * .95) - 1], 2), max_bytes=max(sizes), statuses=sorted(set(statuses)))
     return {"observed_at": datetime.now(timezone.utc).isoformat(), "products": args.products,
         "source": "deterministic synthetic data in disposable local MySQL; native async FastAPI; Redis disabled",
         "correctness": "all three complete rollup outputs equal the full-scan outputs",
@@ -153,6 +154,7 @@ def main():
         args.output.parent.mkdir(parents=True, exist_ok=True)
         args.output.write_text(json.dumps(result, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
         print(json.dumps(result, ensure_ascii=False), flush=True)
+        return int(any(item["statuses"] != [200] for item in result["http"].values()))
     finally:
         if engine is not None:
             engine.dispose()
@@ -163,4 +165,4 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

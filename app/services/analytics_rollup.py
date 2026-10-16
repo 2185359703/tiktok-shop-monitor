@@ -12,10 +12,10 @@ from datetime import datetime
 from decimal import Decimal
 from types import SimpleNamespace
 
-from sqlalchemy import select
+from sqlalchemy import delete, insert, select, tuple_
 from sqlalchemy.orm import undefer
 
-from app.models.analytics_read import AnalyticsProductRollup as Rollup, AnalyticsRefreshRequest as Job, ProductReadModel as P
+from app.models.analytics_read import AnalyticsProductRollup as Rollup, AnalyticsRefreshRequest as Job, ProductReadModel as P, ProductReadAttribute as Attribute
 from app.services.analytics_refresh import VERSION, SCOPE_FIELDS, job_row, key_for, scope
 from app.services.analytics_service import SCATTER_LIMIT
 
@@ -227,6 +227,7 @@ def compact(values):
 
 def update_rollups(db, rows):
     batches = defaultdict(list)
+    applied = []
     for values in rows:
         batches[(values["basis"], values["product_id"] // SHARD_SIZE)].append(values)
     for (basis, shard), values in sorted(batches.items()):
@@ -245,6 +246,7 @@ def update_rollups(db, rows):
             identifier = str(value["product_id"])
             if identifier not in members or members[identifier]["revision"] <= value["applied_revision"]:
                 members[identifier] = compact(value)
+                applied.append(value)
         summaries = {}
         for identifier, member in sorted(members.items(), key=lambda pair: int(pair[0])):
             if not member["eligible"]:
@@ -253,6 +255,27 @@ def update_rollups(db, rows):
             state = summaries.setdefault(key, CurrentTotals() if basis == "current" else HistoricalTotals())
             state.add(SimpleNamespace(shop_id=member["shop_id"], category=member["category"], facts=member["facts"]), member["data"])
         row.members, row.summary = members, {key: state.encode() for key, state in summaries.items()}
+    update_attributes(db, applied)
+
+
+def update_attributes(db, rows):
+    if not rows:
+        return
+    identities = [(row["basis"], row["product_id"]) for row in rows]
+    db.execute(delete(Attribute).where(Attribute.schema_version == VERSION,
+        tuple_(Attribute.basis, Attribute.product_id).in_(identities)))
+    values = []
+    for row in rows:
+        payload = row["payload"]
+        for attribute in ("color", "size", "brand", "gender", "season", "style", "material"):
+            raw = payload.get({"color": "color_summary", "size": "size_summary"}.get(attribute, attribute))
+            members = raw if isinstance(raw, list) else [raw] if raw is not None else []
+            labels = {str(value)[:512].strip(" ") if attribute in {"color", "size"} else str(value).strip(" ")
+                      for value in members if value is not None}
+            values.extend(dict(schema_version=VERSION, basis=row["basis"], product_id=row["product_id"],
+                attribute=attribute, ordinal=ordinal, value=value) for ordinal, value in enumerate(sorted(labels)))
+    for offset in range(0, len(values), 500):
+        db.execute(insert(Attribute), values[offset:offset + 500])
 
 
 def backfill_rollups(db, config):

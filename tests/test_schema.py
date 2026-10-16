@@ -30,7 +30,7 @@ def test_historical_ten_table_ddl_is_preserved():
 
 
 def test_current_schema_matches_registered_models():
-    assert len(Base.metadata.tables) == 21
+    assert len(Base.metadata.tables) == 22
     assert set(Base.metadata.tables) == set(INITIAL_TABLE_NAMES) | set(WORKBENCH_TABLE_NAMES) | set(ANALYTICS_TABLE_NAMES) | set(ROLLUP_TABLE_NAMES) | {ProductContent.__tablename__, ShopProfileSnapshot.__tablename__, ProductReview.__tablename__}
     assert (MIGRATIONS / "current_schema.sql").read_text(encoding="utf-8") == mysql_ddl()
     assert (ProductImage.__tablename__, ProductMatch.__tablename__, SkuMatch.__tablename__) == WORKBENCH_TABLE_NAMES
