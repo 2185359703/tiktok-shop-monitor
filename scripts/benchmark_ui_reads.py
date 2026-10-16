@@ -15,14 +15,14 @@ from decimal import Decimal
 from pathlib import Path
 
 from fastapi.testclient import TestClient
-from sqlalchemy import insert, text
+from sqlalchemy import event, insert, text
 from sqlalchemy.engine import make_url
 from sqlalchemy.orm import sessionmaker
 
 from app.main import create_app
 from app.models import Shop
-from app.models.analytics_read import ProductReadModel
-from app.services.analytics_refresh import VERSION, job_row, scope
+from app.models.analytics_read import AnalyticsRefreshRequest, ProductReadModel
+from app.services.analytics_refresh import VERSION, job_row, key_for, scope
 from app.services.analytics_rollup import backfill_rollups
 from app.services.analytics_snapshot import build_catalog_stats, build_current, build_overview, publish_snapshot
 from app.settings import Settings
@@ -69,6 +69,14 @@ def seed(factory, count):
 
 
 def measure(factory, config, args):
+    marker_params = {**scope(config), "name": "synthetic_ui_benchmark"}
+    if args.reuse_fixture:
+        with factory() as db:
+            marker = db.get(AnalyticsRefreshRequest, (VERSION, "control", key_for("control", marker_params)))
+            if marker is None or marker.parameters.get("products") != args.products:
+                raise ValueError("Existing database is not this script's matching synthetic fixture")
+            timings = marker.parameters["builds"]
+        return measure_http(factory, config, args, timings)
     stamp = seed(factory, args.products)
     params = scope(config)
     builders = {"workbench": build_current, "overview": build_overview, "catalog_stats": build_catalog_stats}
@@ -98,7 +106,13 @@ def measure(factory, config, args):
             publish_snapshot(db, kind, query, 1, value, datetime.now(timezone.utc))
         control = job_row(db, "control", {**params, "name": "backfill"})
         control.parameters = {**control.parameters, "ready": True}
+        marker = job_row(db, "control", marker_params)
+        marker.parameters = {**marker_params, "products": args.products, "builds": timings}
     print(json.dumps({"phase": "summaries_verified", "timings": timings}), flush=True)
+    return measure_http(factory, config, args, timings)
+
+
+def measure_http(factory, config, args, timings):
     paths = ["/api/v2/catalog/products?page=1", "/api/v2/catalog/products?page=500",
         "/api/v2/catalog/products?page=1900", "/api/v2/catalog/products?sort=price_asc&page=100",
         "/api/v2/catalog/products?sort=shop_asc&page=100", "/api/v2/catalog/products?sort=title&page=100",
@@ -109,20 +123,36 @@ def measure(factory, config, args):
         "/api/v2/analytics/workbench?topic=attributes", "/api/v2/catalog/stats"]
     measurements = {}
     os.environ["ANALYTICS_ENABLED"] = "1"
-    with TestClient(create_app(config)) as client:
+    app = create_app(config)
+    with TestClient(app) as client:
+        statements = []
+        def capture(conn, cursor, statement, params, *unused):
+            if statement.startswith("SELECT") and "product_read_models" in statement:
+                statements.append((statement, params))
         for path in paths:
             durations, sizes, statuses = [], [], []
-            for _ in range(args.samples):
+            statements.clear()
+            event.listen(app.state.engine.sync_engine, "before_cursor_execute", capture)
+            for sample in range(args.samples):
                 started = time.perf_counter()
                 response = client.get(path)
                 durations.append((time.perf_counter() - started) * 1000)
                 sizes.append(len(response.content))
                 statuses.append(response.status_code)
+                if sample == 0:
+                    event.remove(app.state.engine.sync_engine, "before_cursor_execute", capture)
                 if response.status_code != 200:
                     break
             ordered = sorted(durations)
             measurements[path] = dict(samples=len(statuses), p50_ms=round(ordered[len(ordered) // 2], 2),
                 p95_ms=round(ordered[math.ceil(len(ordered) * .95) - 1], 2), max_bytes=max(sizes), statuses=sorted(set(statuses)))
+            plans = []
+            with factory() as db:
+                for statement, params in statements:
+                    raw = db.connection().exec_driver_sql("EXPLAIN FORMAT=JSON " + statement, params).scalar()
+                    plans.append(json.loads(raw))
+            measurements[path]["plans"] = plans
+            print(json.dumps({"path": path, **{k: v for k, v in measurements[path].items() if k != "plans"}}), flush=True)
     return {"observed_at": datetime.now(timezone.utc).isoformat(), "products": args.products,
         "source": "deterministic synthetic data in disposable local MySQL; native async FastAPI; Redis disabled",
         "correctness": "all three complete rollup outputs equal the full-scan outputs",
@@ -134,6 +164,8 @@ def main():
     parser.add_argument("--products", type=int, default=50000, choices=range(1, 100001))
     parser.add_argument("--samples", type=int, default=20, choices=range(20, 101))
     parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--keep-fixture", action="store_true", help="Keep this script's isolated fixture for query-plan diagnosis")
+    parser.add_argument("--reuse-fixture", action="store_true", help="Only remeasure an existing fixture marked by this script")
     args = parser.parse_args()
     url = make_url(os.environ["MYSQL_TEST_URL"])
     name = url.database or ""
@@ -142,9 +174,12 @@ def main():
     admin, engine, created = make_engine(url, with_database=False), None, False
     try:
         with admin.connect() as db:
-            if db.scalar(text("SELECT SCHEMA_NAME FROM information_schema.SCHEMATA WHERE SCHEMA_NAME=:name"), {"name": name}):
+            exists = db.scalar(text("SELECT SCHEMA_NAME FROM information_schema.SCHEMATA WHERE SCHEMA_NAME=:name"), {"name": name})
+            if exists and not args.reuse_fixture:
                 raise ValueError("Database already exists; choose a new test name")
-            for statement in mysql_ddl(name).split(";"):
+            if args.reuse_fixture and not exists:
+                raise ValueError("The marked fixture does not exist")
+            for statement in (() if exists else mysql_ddl(name).split(";")):
                 sql = "\n".join(line for line in statement.splitlines() if not line.lstrip().startswith("--")).strip()
                 if sql:
                     db.exec_driver_sql(sql)
@@ -158,7 +193,7 @@ def main():
     finally:
         if engine is not None:
             engine.dispose()
-        if created:
+        if created and not args.keep_fixture:
             with admin.connect() as db:
                 db.exec_driver_sql(f"DROP DATABASE {name}")
         admin.dispose()

@@ -15,6 +15,8 @@ class ProductReadModel(Base):
     __table_args__ = (
         CheckConstraint("basis IN ('current','latest_valid_snapshot')", name="basis"),
         Index("ix_read_products_recent", "platform", "region", "basis", "observed_at", "product_id"),
+        Index("ix_read_products_recent_scope", "schema_version", "basis", "platform", "region", "currency", "pricing_context",
+              "eligible", "observed_at", "product_id", "shop_id"),
         Index("ix_read_products_shop", "platform", "region", "basis", "shop_id", "product_id"),
         Index("ix_read_products_price", "platform", "region", "basis", "price_min", "product_id"),
         Index("ix_read_products_title", "platform", "region", "basis", "title", "product_id"),

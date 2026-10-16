@@ -16,7 +16,7 @@ from sqlalchemy import delete, insert, select, tuple_
 from sqlalchemy.orm import undefer
 
 from app.models.analytics_read import AnalyticsProductRollup as Rollup, AnalyticsRefreshRequest as Job, ProductReadModel as P, ProductReadAttribute as Attribute
-from app.services.analytics_refresh import VERSION, SCOPE_FIELDS, job_row, key_for, scope
+from app.services.analytics_refresh import VERSION, SCOPE_FIELDS, SUMMARY_KINDS, enqueue, job_row, key_for, now, scope
 from app.services.analytics_service import SCATTER_LIMIT
 
 
@@ -287,6 +287,16 @@ def backfill_rollups(db, config):
         P.product_id > state.get("after", 0)).order_by(P.product_id).limit(SHARD_SIZE)).all()
     if not identifiers:
         control.parameters = {**state, "ready": True}
+        from app.services.analytics_runtime import ready
+        if ready(db, config):
+            # An upgrade may inherit the previous release's 300-second due
+            # times. Publish the newly available summaries immediately.
+            stamp = now(db)
+            for kind in SUMMARY_KINDS:
+                for hours in ((24, 168, 720) if kind != "catalog_stats" else (None,)):
+                    params = {**scope(config), **({"lookback_hours": hours} if hours else {})}
+                    request = enqueue(db, kind, params)
+                    request.available_at = stamp
         return True
     # The primary key is (schema_version, basis, product_id). Supplying only
     # schema_version + product_id makes MySQL scan every basis on every batch.

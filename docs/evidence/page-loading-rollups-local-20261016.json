@@ -1,0 +1,2272 @@
+{
+  "observed_at": "2026-10-16T09:44:07.821872+00:00",
+  "products": 50000,
+  "source": "deterministic synthetic data in disposable local MySQL; native async FastAPI; Redis disabled",
+  "correctness": "all three complete rollup outputs equal the full-scan outputs",
+  "builds": {
+    "overview": {
+      "rollup_seconds": 1.213,
+      "full_scan_seconds": 7.517
+    },
+    "workbench": {
+      "rollup_seconds": 1.169,
+      "full_scan_seconds": 13.429
+    },
+    "catalog_stats": {
+      "rollup_seconds": 0.927,
+      "full_scan_seconds": 14.078
+    }
+  },
+  "http": {
+    "/api/v2/catalog/products?page=1": {
+      "samples": 20,
+      "p50_ms": 14.41,
+      "p95_ms": 16.41,
+      "max_bytes": 57670,
+      "statuses": [
+        200
+      ],
+      "plans": [
+        {
+          "query_block": {
+            "select_id": 1,
+            "cost_info": {
+              "query_cost": "20536.92"
+            },
+            "ordering_operation": {
+              "using_filesort": false,
+              "nested_loop": [
+                {
+                  "table": {
+                    "table_name": "product_read_models",
+                    "access_type": "ref",
+                    "possible_keys": [
+                      "ix_read_products_recent_scope"
+                    ],
+                    "key": "ix_read_products_recent_scope",
+                    "used_key_parts": [
+                      "schema_version",
+                      "basis",
+                      "platform",
+                      "region",
+                      "currency",
+                      "pricing_context",
+                      "eligible"
+                    ],
+                    "key_length": "547",
+                    "ref": [
+                      "const",
+                      "const",
+                      "const",
+                      "const",
+                      "const",
+                      "const",
+                      "const"
+                    ],
+                    "rows_examined_per_scan": 38505,
+                    "rows_produced_per_join": 38505,
+                    "filtered": "100.00",
+                    "backward_index_scan": true,
+                    "using_index": true,
+                    "cost_info": {
+                      "read_cost": "3209.67",
+                      "eval_cost": "3850.50",
+                      "prefix_cost": "7060.17",
+                      "data_read_per_join": "160M"
+                    },
+                    "used_columns": [
+                      "schema_version",
+                      "basis",
+                      "product_id",
+                      "platform",
+                      "region",
+                      "currency",
+                      "pricing_context",
+                      "shop_id",
+                      "observed_at",
+                      "eligible"
+                    ]
+                  }
+                },
+                {
+                  "table": {
+                    "table_name": "shops",
+                    "access_type": "eq_ref",
+                    "possible_keys": [
+                      "PRIMARY",
+                      "uq_shops_identity",
+                      "uq_shops_scope",
+                      "ix_shops_market_status"
+                    ],
+                    "key": "PRIMARY",
+                    "used_key_parts": [
+                      "id"
+                    ],
+                    "key_length": "8",
+                    "ref": [
+                      "tiktok_shop_monitor_test_rollups_plan_20261016.product_read_models.shop_id"
+                    ],
+                    "rows_examined_per_scan": 1,
+                    "rows_produced_per_join": 38505,
+                    "filtered": "100.00",
+                    "cost_info": {
+                      "read_cost": "9626.25",
+                      "eval_cost": "3850.50",
+                      "prefix_cost": "20536.92",
+                      "data_read_per_join": "242M"
+                    },
+                    "used_columns": [
+                      "id",
+                      "platform",
+                      "region"
+                    ],
+                    "attached_condition": "((`tiktok_shop_monitor_test_rollups_plan_20261016`.`shops`.`region` = 'US') and (`tiktok_shop_monitor_test_rollups_plan_20261016`.`shops`.`platform` = 'tiktok_shop'))"
+                  }
+                }
+              ]
+            }
+          }
+        },
+        {
+          "query_block": {
+            "select_id": 1,
+            "cost_info": {
+              "query_cost": "33.28"
+            },
+            "nested_loop": [
+              {
+                "table": {
+                  "table_name": "product_read_models",
+                  "access_type": "range",
+                  "possible_keys": [
+                    "PRIMARY",
+                    "ix_read_products_catalog",
+                    "ix_read_products_scope",
+                    "ix_read_products_recent_scope"
+                  ],
+                  "key": "PRIMARY",
+                  "used_key_parts": [
+                    "schema_version",
+                    "basis",
+                    "product_id"
+                  ],
+                  "key_length": "142",
+                  "rows_examined_per_scan": 24,
+                  "rows_produced_per_join": 24,
+                  "filtered": "100.00",
+                  "cost_info": {
+                    "read_cost": "22.48",
+                    "eval_cost": "2.40",
+                    "prefix_cost": "24.88",
+                    "data_read_per_join": "102K"
+                  },
+                  "used_columns": [
+                    "schema_version",
+                    "basis",
+                    "product_id",
+                    "shop_id",
+                    "payload"
+                  ],
+                  "attached_condition": "((`tiktok_shop_monitor_test_rollups_plan_20261016`.`product_read_models`.`basis` = 'current') and (`tiktok_shop_monitor_test_rollups_plan_20261016`.`product_read_models`.`schema_version` = 2) and (`tiktok_shop_monitor_test_rollups_plan_20261016`.`product_read_models`.`product_id` in (49800,49500,49200,48900,48600,48300,48000,47700,47400,47100,46800,46500,46200,45900,45600,45300,45000,44700,44400,44100,43800,43500,43200,42900)))"
+                }
+              },
+              {
+                "table": {
+                  "table_name": "shops",
+                  "access_type": "eq_ref",
+                  "possible_keys": [
+                    "PRIMARY",
+                    "uq_shops_scope"
+                  ],
+                  "key": "PRIMARY",
+                  "used_key_parts": [
+                    "id"
+                  ],
+                  "key_length": "8",
+                  "ref": [
+                    "tiktok_shop_monitor_test_rollups_plan_20261016.product_read_models.shop_id"
+                  ],
+                  "rows_examined_per_scan": 1,
+                  "rows_produced_per_join": 24,
+                  "filtered": "100.00",
+                  "cost_info": {
+                    "read_cost": "6.00",
+                    "eval_cost": "2.40",
+                    "prefix_cost": "33.28",
+                    "data_read_per_join": "154K"
+                  },
+                  "used_columns": [
+                    "canonical_name",
+                    "id"
+                  ]
+                }
+              }
+            ]
+          }
+        }
+      ]
+    },
+    "/api/v2/catalog/products?page=500": {
+      "samples": 20,
+      "p50_ms": 102.78,
+      "p95_ms": 118.81,
+      "max_bytes": 58648,
+      "statuses": [
+        200
+      ],
+      "plans": [
+        {
+          "query_block": {
+            "select_id": 1,
+            "cost_info": {
+              "query_cost": "20536.92"
+            },
+            "ordering_operation": {
+              "using_filesort": false,
+              "nested_loop": [
+                {
+                  "table": {
+                    "table_name": "product_read_models",
+                    "access_type": "ref",
+                    "possible_keys": [
+                      "ix_read_products_recent_scope"
+                    ],
+                    "key": "ix_read_products_recent_scope",
+                    "used_key_parts": [
+                      "schema_version",
+                      "basis",
+                      "platform",
+                      "region",
+                      "currency",
+                      "pricing_context",
+                      "eligible"
+                    ],
+                    "key_length": "547",
+                    "ref": [
+                      "const",
+                      "const",
+                      "const",
+                      "const",
+                      "const",
+                      "const",
+                      "const"
+                    ],
+                    "rows_examined_per_scan": 38505,
+                    "rows_produced_per_join": 38505,
+                    "filtered": "100.00",
+                    "backward_index_scan": true,
+                    "using_index": true,
+                    "cost_info": {
+                      "read_cost": "3209.67",
+                      "eval_cost": "3850.50",
+                      "prefix_cost": "7060.17",
+                      "data_read_per_join": "160M"
+                    },
+                    "used_columns": [
+                      "schema_version",
+                      "basis",
+                      "product_id",
+                      "platform",
+                      "region",
+                      "currency",
+                      "pricing_context",
+                      "shop_id",
+                      "observed_at",
+                      "eligible"
+                    ]
+                  }
+                },
+                {
+                  "table": {
+                    "table_name": "shops",
+                    "access_type": "eq_ref",
+                    "possible_keys": [
+                      "PRIMARY",
+                      "uq_shops_identity",
+                      "uq_shops_scope",
+                      "ix_shops_market_status"
+                    ],
+                    "key": "PRIMARY",
+                    "used_key_parts": [
+                      "id"
+                    ],
+                    "key_length": "8",
+                    "ref": [
+                      "tiktok_shop_monitor_test_rollups_plan_20261016.product_read_models.shop_id"
+                    ],
+                    "rows_examined_per_scan": 1,
+                    "rows_produced_per_join": 38505,
+                    "filtered": "100.00",
+                    "cost_info": {
+                      "read_cost": "9626.25",
+                      "eval_cost": "3850.50",
+                      "prefix_cost": "20536.92",
+                      "data_read_per_join": "242M"
+                    },
+                    "used_columns": [
+                      "id",
+                      "platform",
+                      "region"
+                    ],
+                    "attached_condition": "((`tiktok_shop_monitor_test_rollups_plan_20261016`.`shops`.`region` = 'US') and (`tiktok_shop_monitor_test_rollups_plan_20261016`.`shops`.`platform` = 'tiktok_shop'))"
+                  }
+                }
+              ]
+            }
+          }
+        },
+        {
+          "query_block": {
+            "select_id": 1,
+            "cost_info": {
+              "query_cost": "33.32"
+            },
+            "nested_loop": [
+              {
+                "table": {
+                  "table_name": "product_read_models",
+                  "access_type": "range",
+                  "possible_keys": [
+                    "PRIMARY",
+                    "ix_read_products_catalog",
+                    "ix_read_products_scope",
+                    "ix_read_products_recent_scope"
+                  ],
+                  "key": "PRIMARY",
+                  "used_key_parts": [
+                    "schema_version",
+                    "basis",
+                    "product_id"
+                  ],
+                  "key_length": "142",
+                  "rows_examined_per_scan": 24,
+                  "rows_produced_per_join": 24,
+                  "filtered": "100.00",
+                  "cost_info": {
+                    "read_cost": "22.52",
+                    "eval_cost": "2.40",
+                    "prefix_cost": "24.92",
+                    "data_read_per_join": "102K"
+                  },
+                  "used_columns": [
+                    "schema_version",
+                    "basis",
+                    "product_id",
+                    "shop_id",
+                    "payload"
+                  ],
+                  "attached_condition": "((`tiktok_shop_monitor_test_rollups_plan_20261016`.`product_read_models`.`basis` = 'current') and (`tiktok_shop_monitor_test_rollups_plan_20261016`.`product_read_models`.`schema_version` = 2) and (`tiktok_shop_monitor_test_rollups_plan_20261016`.`product_read_models`.`product_id` in (13871,13571,13271,12971,12671,12371,12071,11771,11471,11171,10871,10571,10271,9971,9671,9371,9071,8771,8471,8171,7871,7571,7271,6971)))"
+                }
+              },
+              {
+                "table": {
+                  "table_name": "shops",
+                  "access_type": "eq_ref",
+                  "possible_keys": [
+                    "PRIMARY",
+                    "uq_shops_scope"
+                  ],
+                  "key": "PRIMARY",
+                  "used_key_parts": [
+                    "id"
+                  ],
+                  "key_length": "8",
+                  "ref": [
+                    "tiktok_shop_monitor_test_rollups_plan_20261016.product_read_models.shop_id"
+                  ],
+                  "rows_examined_per_scan": 1,
+                  "rows_produced_per_join": 24,
+                  "filtered": "100.00",
+                  "cost_info": {
+                    "read_cost": "6.00",
+                    "eval_cost": "2.40",
+                    "prefix_cost": "33.32",
+                    "data_read_per_join": "154K"
+                  },
+                  "used_columns": [
+                    "canonical_name",
+                    "id"
+                  ]
+                }
+              }
+            ]
+          }
+        }
+      ]
+    },
+    "/api/v2/catalog/products?page=1900": {
+      "samples": 20,
+      "p50_ms": 338.35,
+      "p95_ms": 361.2,
+      "max_bytes": 58447,
+      "statuses": [
+        200
+      ],
+      "plans": [
+        {
+          "query_block": {
+            "select_id": 1,
+            "cost_info": {
+              "query_cost": "20536.92"
+            },
+            "ordering_operation": {
+              "using_filesort": false,
+              "nested_loop": [
+                {
+                  "table": {
+                    "table_name": "product_read_models",
+                    "access_type": "ref",
+                    "possible_keys": [
+                      "ix_read_products_recent_scope"
+                    ],
+                    "key": "ix_read_products_recent_scope",
+                    "used_key_parts": [
+                      "schema_version",
+                      "basis",
+                      "platform",
+                      "region",
+                      "currency",
+                      "pricing_context",
+                      "eligible"
+                    ],
+                    "key_length": "547",
+                    "ref": [
+                      "const",
+                      "const",
+                      "const",
+                      "const",
+                      "const",
+                      "const",
+                      "const"
+                    ],
+                    "rows_examined_per_scan": 38505,
+                    "rows_produced_per_join": 38505,
+                    "filtered": "100.00",
+                    "backward_index_scan": true,
+                    "using_index": true,
+                    "cost_info": {
+                      "read_cost": "3209.67",
+                      "eval_cost": "3850.50",
+                      "prefix_cost": "7060.17",
+                      "data_read_per_join": "160M"
+                    },
+                    "used_columns": [
+                      "schema_version",
+                      "basis",
+                      "product_id",
+                      "platform",
+                      "region",
+                      "currency",
+                      "pricing_context",
+                      "shop_id",
+                      "observed_at",
+                      "eligible"
+                    ]
+                  }
+                },
+                {
+                  "table": {
+                    "table_name": "shops",
+                    "access_type": "eq_ref",
+                    "possible_keys": [
+                      "PRIMARY",
+                      "uq_shops_identity",
+                      "uq_shops_scope",
+                      "ix_shops_market_status"
+                    ],
+                    "key": "PRIMARY",
+                    "used_key_parts": [
+                      "id"
+                    ],
+                    "key_length": "8",
+                    "ref": [
+                      "tiktok_shop_monitor_test_rollups_plan_20261016.product_read_models.shop_id"
+                    ],
+                    "rows_examined_per_scan": 1,
+                    "rows_produced_per_join": 38505,
+                    "filtered": "100.00",
+                    "cost_info": {
+                      "read_cost": "9626.25",
+                      "eval_cost": "3850.50",
+                      "prefix_cost": "20536.92",
+                      "data_read_per_join": "242M"
+                    },
+                    "used_columns": [
+                      "id",
+                      "platform",
+                      "region"
+                    ],
+                    "attached_condition": "((`tiktok_shop_monitor_test_rollups_plan_20261016`.`shops`.`region` = 'US') and (`tiktok_shop_monitor_test_rollups_plan_20261016`.`shops`.`platform` = 'tiktok_shop'))"
+                  }
+                }
+              ]
+            }
+          }
+        },
+        {
+          "query_block": {
+            "select_id": 1,
+            "cost_info": {
+              "query_cost": "33.46"
+            },
+            "nested_loop": [
+              {
+                "table": {
+                  "table_name": "product_read_models",
+                  "access_type": "range",
+                  "possible_keys": [
+                    "PRIMARY",
+                    "ix_read_products_catalog",
+                    "ix_read_products_scope",
+                    "ix_read_products_recent_scope"
+                  ],
+                  "key": "PRIMARY",
+                  "used_key_parts": [
+                    "schema_version",
+                    "basis",
+                    "product_id"
+                  ],
+                  "key_length": "142",
+                  "rows_examined_per_scan": 24,
+                  "rows_produced_per_join": 24,
+                  "filtered": "100.00",
+                  "cost_info": {
+                    "read_cost": "22.66",
+                    "eval_cost": "2.40",
+                    "prefix_cost": "25.06",
+                    "data_read_per_join": "102K"
+                  },
+                  "used_columns": [
+                    "schema_version",
+                    "basis",
+                    "product_id",
+                    "shop_id",
+                    "payload"
+                  ],
+                  "attached_condition": "((`tiktok_shop_monitor_test_rollups_plan_20261016`.`product_read_models`.`basis` = 'current') and (`tiktok_shop_monitor_test_rollups_plan_20261016`.`product_read_models`.`schema_version` = 2) and (`tiktok_shop_monitor_test_rollups_plan_20261016`.`product_read_models`.`product_id` in (32373,32073,31773,31473,31173,30873,30573,30273,29973,29673,29373,29073,28773,28473,28173,27873,27573,27273,26973,26673,26373,26073,25773,25473)))"
+                }
+              },
+              {
+                "table": {
+                  "table_name": "shops",
+                  "access_type": "eq_ref",
+                  "possible_keys": [
+                    "PRIMARY",
+                    "uq_shops_scope"
+                  ],
+                  "key": "PRIMARY",
+                  "used_key_parts": [
+                    "id"
+                  ],
+                  "key_length": "8",
+                  "ref": [
+                    "tiktok_shop_monitor_test_rollups_plan_20261016.product_read_models.shop_id"
+                  ],
+                  "rows_examined_per_scan": 1,
+                  "rows_produced_per_join": 24,
+                  "filtered": "100.00",
+                  "cost_info": {
+                    "read_cost": "6.00",
+                    "eval_cost": "2.40",
+                    "prefix_cost": "33.46",
+                    "data_read_per_join": "154K"
+                  },
+                  "used_columns": [
+                    "canonical_name",
+                    "id"
+                  ]
+                }
+              }
+            ]
+          }
+        }
+      ]
+    },
+    "/api/v2/catalog/products?sort=price_asc&page=100": {
+      "samples": 20,
+      "p50_ms": 101.03,
+      "p95_ms": 125.31,
+      "max_bytes": 58451,
+      "statuses": [
+        200
+      ],
+      "plans": [
+        {
+          "query_block": {
+            "select_id": 1,
+            "cost_info": {
+              "query_cost": "59.24"
+            },
+            "ordering_operation": {
+              "using_filesort": true,
+              "cost_info": {
+                "sort_cost": "51.00"
+              },
+              "table": {
+                "table_name": "anon_1",
+                "access_type": "ALL",
+                "rows_examined_per_scan": 51,
+                "rows_produced_per_join": 51,
+                "filtered": "100.00",
+                "cost_info": {
+                  "read_cost": "3.14",
+                  "eval_cost": "5.10",
+                  "prefix_cost": "8.24",
+                  "data_read_per_join": "1K"
+                },
+                "used_columns": [
+                  "product_id",
+                  "sort_value",
+                  "unknown"
+                ],
+                "materialized_from_subquery": {
+                  "using_temporary_table": true,
+                  "dependent": false,
+                  "cacheable": true,
+                  "query_block": {
+                    "union_result": {
+                      "using_temporary_table": false,
+                      "query_specifications": [
+                        {
+                          "dependent": false,
+                          "cacheable": true,
+                          "query_block": {
+                            "select_id": 2,
+                            "cost_info": {
+                              "query_cost": "6.77"
+                            },
+                            "table": {
+                              "table_name": "anon_2",
+                              "access_type": "ALL",
+                              "rows_examined_per_scan": 38,
+                              "rows_produced_per_join": 38,
+                              "filtered": "100.00",
+                              "cost_info": {
+                                "read_cost": "2.98",
+                                "eval_cost": "3.80",
+                                "prefix_cost": "6.78",
+                                "data_read_per_join": "912"
+                              },
+                              "used_columns": [
+                                "product_id",
+                                "sort_value"
+                              ],
+                              "materialized_from_subquery": {
+                                "using_temporary_table": true,
+                                "dependent": false,
+                                "cacheable": true,
+                                "query_block": {
+                                  "select_id": 3,
+                                  "cost_info": {
+                                    "query_cost": "40177.88"
+                                  },
+                                  "ordering_operation": {
+                                    "using_filesort": false,
+                                    "nested_loop": [
+                                      {
+                                        "table": {
+                                          "table_name": "product_read_models",
+                                          "access_type": "range",
+                                          "possible_keys": [
+                                            "ix_read_products_price"
+                                          ],
+                                          "key": "ix_read_products_price",
+                                          "used_key_parts": [
+                                            "platform",
+                                            "region",
+                                            "basis",
+                                            "price_min"
+                                          ],
+                                          "key_length": "277",
+                                          "rows_examined_per_scan": 38505,
+                                          "rows_produced_per_join": 38,
+                                          "filtered": "0.10",
+                                          "index_condition": "((`tiktok_shop_monitor_test_rollups_plan_20261016`.`product_read_models`.`region` = 'US') and (`tiktok_shop_monitor_test_rollups_plan_20261016`.`product_read_models`.`platform` = 'tiktok_shop') and (`tiktok_shop_monitor_test_rollups_plan_20261016`.`product_read_models`.`basis` = 'current') and (`tiktok_shop_monitor_test_rollups_plan_20261016`.`product_read_models`.`schema_version` = 2) and (`tiktok_shop_monitor_test_rollups_plan_20261016`.`product_read_models`.`price_min` is not null))",
+                                          "cost_info": {
+                                            "read_cost": "40122.05",
+                                            "eval_cost": "3.85",
+                                            "prefix_cost": "40125.90",
+                                            "data_read_per_join": "163K"
+                                          },
+                                          "used_columns": [
+                                            "schema_version",
+                                            "basis",
+                                            "product_id",
+                                            "platform",
+                                            "region",
+                                            "currency",
+                                            "pricing_context",
+                                            "shop_id",
+                                            "price_min",
+                                            "eligible"
+                                          ],
+                                          "attached_condition": "((`tiktok_shop_monitor_test_rollups_plan_20261016`.`product_read_models`.`pricing_context` = 'public_listed') and (`tiktok_shop_monitor_test_rollups_plan_20261016`.`product_read_models`.`currency` = 'USD') and (`tiktok_shop_monitor_test_rollups_plan_20261016`.`product_read_models`.`eligible` = true))"
+                                        }
+                                      },
+                                      {
+                                        "table": {
+                                          "table_name": "shops",
+                                          "access_type": "eq_ref",
+                                          "possible_keys": [
+                                            "PRIMARY",
+                                            "uq_shops_identity",
+                                            "uq_shops_scope",
+                                            "ix_shops_market_status"
+                                          ],
+                                          "key": "PRIMARY",
+                                          "used_key_parts": [
+                                            "id"
+                                          ],
+                                          "key_length": "8",
+                                          "ref": [
+                                            "tiktok_shop_monitor_test_rollups_plan_20261016.product_read_models.shop_id"
+                                          ],
+                                          "rows_examined_per_scan": 1,
+                                          "rows_produced_per_join": 38,
+                                          "filtered": "100.00",
+                                          "cost_info": {
+                                            "read_cost": "9.63",
+                                            "eval_cost": "3.85",
+                                            "prefix_cost": "40139.38",
+                                            "data_read_per_join": "248K"
+                                          },
+                                          "used_columns": [
+                                            "id",
+                                            "platform",
+                                            "region"
+                                          ],
+                                          "attached_condition": "((`tiktok_shop_monitor_test_rollups_plan_20261016`.`shops`.`region` = 'US') and (`tiktok_shop_monitor_test_rollups_plan_20261016`.`shops`.`platform` = 'tiktok_shop'))"
+                                        }
+                                      }
+                                    ]
+                                  }
+                                }
+                              }
+                            }
+                          }
+                        },
+                        {
+                          "dependent": false,
+                          "cacheable": true,
+                          "query_block": {
+                            "select_id": 4,
+                            "cost_info": {
+                              "query_cost": "3.96"
+                            },
+                            "table": {
+                              "table_name": "anon_3",
+                              "access_type": "ALL",
+                              "rows_examined_per_scan": 13,
+                              "rows_produced_per_join": 13,
+                              "filtered": "100.00",
+                              "cost_info": {
+                                "read_cost": "2.66",
+                                "eval_cost": "1.30",
+                                "prefix_cost": "3.96",
+                                "data_read_per_join": "312"
+                              },
+                              "used_columns": [
+                                "product_id",
+                                "sort_value"
+                              ],
+                              "materialized_from_subquery": {
+                                "using_temporary_table": true,
+                                "dependent": false,
+                                "cacheable": true,
+                                "query_block": {
+                                  "select_id": 5,
+                                  "cost_info": {
+                                    "query_cost": "7856.68"
+                                  },
+                                  "ordering_operation": {
+                                    "using_filesort": false,
+                                    "nested_loop": [
+                                      {
+                                        "table": {
+                                          "table_name": "product_read_models",
+                                          "access_type": "ref",
+                                          "possible_keys": [
+                                            "ix_read_products_price"
+                                          ],
+                                          "key": "ix_read_products_price",
+                                          "used_key_parts": [
+                                            "platform",
+                                            "region",
+                                            "basis",
+                                            "price_min"
+                                          ],
+                                          "key_length": "277",
+                                          "ref": [
+                                            "const",
+                                            "const",
+                                            "const",
+                                            "const"
+                                          ],
+                                          "rows_examined_per_scan": 13670,
+                                          "rows_produced_per_join": 13,
+                                          "filtered": "0.10",
+                                          "index_condition": "((`tiktok_shop_monitor_test_rollups_plan_20261016`.`product_read_models`.`schema_version` = 2) and (`tiktok_shop_monitor_test_rollups_plan_20261016`.`product_read_models`.`price_min` is null))",
+                                          "cost_info": {
+                                            "read_cost": "6484.89",
+                                            "eval_cost": "1.37",
+                                            "prefix_cost": "7851.89",
+                                            "data_read_per_join": "58K"
+                                          },
+                                          "used_columns": [
+                                            "schema_version",
+                                            "basis",
+                                            "product_id",
+                                            "platform",
+                                            "region",
+                                            "currency",
+                                            "pricing_context",
+                                            "shop_id",
+                                            "price_min",
+                                            "eligible"
+                                          ],
+                                          "attached_condition": "((`tiktok_shop_monitor_test_rollups_plan_20261016`.`product_read_models`.`pricing_context` = 'public_listed') and (`tiktok_shop_monitor_test_rollups_plan_20261016`.`product_read_models`.`currency` = 'USD') and (`tiktok_shop_monitor_test_rollups_plan_20261016`.`product_read_models`.`eligible` = true))"
+                                        }
+                                      },
+                                      {
+                                        "table": {
+                                          "table_name": "shops",
+                                          "access_type": "eq_ref",
+                                          "possible_keys": [
+                                            "PRIMARY",
+                                            "uq_shops_identity",
+                                            "uq_shops_scope",
+                                            "ix_shops_market_status"
+                                          ],
+                                          "key": "PRIMARY",
+                                          "used_key_parts": [
+                                            "id"
+                                          ],
+                                          "key_length": "8",
+                                          "ref": [
+                                            "tiktok_shop_monitor_test_rollups_plan_20261016.product_read_models.shop_id"
+                                          ],
+                                          "rows_examined_per_scan": 1,
+                                          "rows_produced_per_join": 13,
+                                          "filtered": "100.00",
+                                          "cost_info": {
+                                            "read_cost": "3.42",
+                                            "eval_cost": "1.37",
+                                            "prefix_cost": "7856.68",
+                                            "data_read_per_join": "88K"
+                                          },
+                                          "used_columns": [
+                                            "id",
+                                            "platform",
+                                            "region"
+                                          ],
+                                          "attached_condition": "((`tiktok_shop_monitor_test_rollups_plan_20261016`.`shops`.`region` = 'US') and (`tiktok_shop_monitor_test_rollups_plan_20261016`.`shops`.`platform` = 'tiktok_shop'))"
+                                        }
+                                      }
+                                    ]
+                                  }
+                                }
+                              }
+                            }
+                          }
+                        }
+                      ]
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        {
+          "query_block": {
+            "select_id": 1,
+            "cost_info": {
+              "query_cost": "33.48"
+            },
+            "nested_loop": [
+              {
+                "table": {
+                  "table_name": "product_read_models",
+                  "access_type": "range",
+                  "possible_keys": [
+                    "PRIMARY",
+                    "ix_read_products_catalog",
+                    "ix_read_products_scope",
+                    "ix_read_products_recent_scope"
+                  ],
+                  "key": "PRIMARY",
+                  "used_key_parts": [
+                    "schema_version",
+                    "basis",
+                    "product_id"
+                  ],
+                  "key_length": "142",
+                  "rows_examined_per_scan": 24,
+                  "rows_produced_per_join": 24,
+                  "filtered": "100.00",
+                  "cost_info": {
+                    "read_cost": "22.68",
+                    "eval_cost": "2.40",
+                    "prefix_cost": "25.08",
+                    "data_read_per_join": "102K"
+                  },
+                  "used_columns": [
+                    "schema_version",
+                    "basis",
+                    "product_id",
+                    "shop_id",
+                    "payload"
+                  ],
+                  "attached_condition": "((`tiktok_shop_monitor_test_rollups_plan_20261016`.`product_read_models`.`basis` = 'current') and (`tiktok_shop_monitor_test_rollups_plan_20261016`.`product_read_models`.`schema_version` = 2) and (`tiktok_shop_monitor_test_rollups_plan_20261016`.`product_read_models`.`product_id` in (10554,20554,30554,40554,555,10555,20555,40555,556,20556,30556,40556,557,10557,20557,30557,40557,558,10558,20558,30558,559,10559,30559)))"
+                }
+              },
+              {
+                "table": {
+                  "table_name": "shops",
+                  "access_type": "eq_ref",
+                  "possible_keys": [
+                    "PRIMARY",
+                    "uq_shops_scope"
+                  ],
+                  "key": "PRIMARY",
+                  "used_key_parts": [
+                    "id"
+                  ],
+                  "key_length": "8",
+                  "ref": [
+                    "tiktok_shop_monitor_test_rollups_plan_20261016.product_read_models.shop_id"
+                  ],
+                  "rows_examined_per_scan": 1,
+                  "rows_produced_per_join": 24,
+                  "filtered": "100.00",
+                  "cost_info": {
+                    "read_cost": "6.00",
+                    "eval_cost": "2.40",
+                    "prefix_cost": "33.48",
+                    "data_read_per_join": "154K"
+                  },
+                  "used_columns": [
+                    "canonical_name",
+                    "id"
+                  ]
+                }
+              }
+            ]
+          }
+        }
+      ]
+    },
+    "/api/v2/catalog/products?sort=shop_asc&page=100": {
+      "samples": 20,
+      "p50_ms": 79.65,
+      "p95_ms": 107.39,
+      "max_bytes": 58574,
+      "statuses": [
+        200
+      ],
+      "plans": [
+        {
+          "query_block": {
+            "select_id": 1,
+            "cost_info": {
+              "query_cost": "353.34"
+            },
+            "ordering_operation": {
+              "using_filesort": false,
+              "nested_loop": [
+                {
+                  "table": {
+                    "table_name": "product_read_models",
+                    "access_type": "ref",
+                    "possible_keys": [
+                      "ix_read_products_scope"
+                    ],
+                    "key": "ix_read_products_scope",
+                    "used_key_parts": [
+                      "schema_version",
+                      "basis",
+                      "platform",
+                      "region",
+                      "currency",
+                      "pricing_context",
+                      "eligible",
+                      "shop_id"
+                    ],
+                    "key_length": "555",
+                    "ref": [
+                      "const",
+                      "const",
+                      "const",
+                      "const",
+                      "const",
+                      "const",
+                      "const",
+                      "const"
+                    ],
+                    "rows_examined_per_scan": 1250,
+                    "rows_produced_per_join": 1250,
+                    "filtered": "100.00",
+                    "using_index": true,
+                    "cost_info": {
+                      "read_cost": "103.09",
+                      "eval_cost": "125.00",
+                      "prefix_cost": "228.09",
+                      "data_read_per_join": "5M"
+                    },
+                    "used_columns": [
+                      "schema_version",
+                      "basis",
+                      "product_id",
+                      "platform",
+                      "region",
+                      "currency",
+                      "pricing_context",
+                      "shop_id",
+                      "eligible"
+                    ]
+                  }
+                },
+                {
+                  "table": {
+                    "table_name": "shops",
+                    "access_type": "const",
+                    "possible_keys": [
+                      "PRIMARY",
+                      "uq_shops_identity",
+                      "uq_shops_scope",
+                      "ix_shops_market_status"
+                    ],
+                    "key": "PRIMARY",
+                    "used_key_parts": [
+                      "id"
+                    ],
+                    "key_length": "8",
+                    "ref": [
+                      "const"
+                    ],
+                    "rows_examined_per_scan": 1,
+                    "rows_produced_per_join": 1250,
+                    "filtered": "100.00",
+                    "cost_info": {
+                      "read_cost": "0.25",
+                      "eval_cost": "125.00",
+                      "prefix_cost": "353.34",
+                      "data_read_per_join": "7M"
+                    },
+                    "used_columns": [
+                      "id",
+                      "platform",
+                      "region"
+                    ],
+                    "attached_condition": "((`tiktok_shop_monitor_test_rollups_plan_20261016`.`shops`.`region` = 'US') and (`tiktok_shop_monitor_test_rollups_plan_20261016`.`shops`.`platform` = 'tiktok_shop'))"
+                  }
+                }
+              ]
+            }
+          }
+        },
+        {
+          "query_block": {
+            "select_id": 1,
+            "cost_info": {
+              "query_cost": "353.34"
+            },
+            "ordering_operation": {
+              "using_filesort": false,
+              "nested_loop": [
+                {
+                  "table": {
+                    "table_name": "product_read_models",
+                    "access_type": "ref",
+                    "possible_keys": [
+                      "ix_read_products_scope"
+                    ],
+                    "key": "ix_read_products_scope",
+                    "used_key_parts": [
+                      "schema_version",
+                      "basis",
+                      "platform",
+                      "region",
+                      "currency",
+                      "pricing_context",
+                      "eligible",
+                      "shop_id"
+                    ],
+                    "key_length": "555",
+                    "ref": [
+                      "const",
+                      "const",
+                      "const",
+                      "const",
+                      "const",
+                      "const",
+                      "const",
+                      "const"
+                    ],
+                    "rows_examined_per_scan": 1250,
+                    "rows_produced_per_join": 1250,
+                    "filtered": "100.00",
+                    "using_index": true,
+                    "cost_info": {
+                      "read_cost": "103.09",
+                      "eval_cost": "125.00",
+                      "prefix_cost": "228.09",
+                      "data_read_per_join": "5M"
+                    },
+                    "used_columns": [
+                      "schema_version",
+                      "basis",
+                      "product_id",
+                      "platform",
+                      "region",
+                      "currency",
+                      "pricing_context",
+                      "shop_id",
+                      "eligible"
+                    ]
+                  }
+                },
+                {
+                  "table": {
+                    "table_name": "shops",
+                    "access_type": "const",
+                    "possible_keys": [
+                      "PRIMARY",
+                      "uq_shops_identity",
+                      "uq_shops_scope",
+                      "ix_shops_market_status"
+                    ],
+                    "key": "PRIMARY",
+                    "used_key_parts": [
+                      "id"
+                    ],
+                    "key_length": "8",
+                    "ref": [
+                      "const"
+                    ],
+                    "rows_examined_per_scan": 1,
+                    "rows_produced_per_join": 1250,
+                    "filtered": "100.00",
+                    "cost_info": {
+                      "read_cost": "0.25",
+                      "eval_cost": "125.00",
+                      "prefix_cost": "353.34",
+                      "data_read_per_join": "7M"
+                    },
+                    "used_columns": [
+                      "id",
+                      "platform",
+                      "region"
+                    ],
+                    "attached_condition": "((`tiktok_shop_monitor_test_rollups_plan_20261016`.`shops`.`region` = 'US') and (`tiktok_shop_monitor_test_rollups_plan_20261016`.`shops`.`platform` = 'tiktok_shop'))"
+                  }
+                }
+              ]
+            }
+          }
+        },
+        {
+          "query_block": {
+            "select_id": 1,
+            "cost_info": {
+              "query_cost": "33.49"
+            },
+            "nested_loop": [
+              {
+                "table": {
+                  "table_name": "product_read_models",
+                  "access_type": "range",
+                  "possible_keys": [
+                    "PRIMARY",
+                    "ix_read_products_catalog",
+                    "ix_read_products_scope",
+                    "ix_read_products_recent_scope"
+                  ],
+                  "key": "PRIMARY",
+                  "used_key_parts": [
+                    "schema_version",
+                    "basis",
+                    "product_id"
+                  ],
+                  "key_length": "142",
+                  "rows_examined_per_scan": 24,
+                  "rows_produced_per_join": 24,
+                  "filtered": "100.00",
+                  "cost_info": {
+                    "read_cost": "22.69",
+                    "eval_cost": "2.40",
+                    "prefix_cost": "25.09",
+                    "data_read_per_join": "102K"
+                  },
+                  "used_columns": [
+                    "schema_version",
+                    "basis",
+                    "product_id",
+                    "shop_id",
+                    "payload"
+                  ],
+                  "attached_condition": "((`tiktok_shop_monitor_test_rollups_plan_20261016`.`product_read_models`.`basis` = 'current') and (`tiktok_shop_monitor_test_rollups_plan_20261016`.`product_read_models`.`schema_version` = 2) and (`tiktok_shop_monitor_test_rollups_plan_20261016`.`product_read_models`.`product_id` in (45041,45081,45121,45161,45201,45241,45281,45321,45361,45401,45441,45481,45521,45561,45601,45641,45681,45721,45761,45801,45841,45881,45921,45961)))"
+                }
+              },
+              {
+                "table": {
+                  "table_name": "shops",
+                  "access_type": "eq_ref",
+                  "possible_keys": [
+                    "PRIMARY",
+                    "uq_shops_scope"
+                  ],
+                  "key": "PRIMARY",
+                  "used_key_parts": [
+                    "id"
+                  ],
+                  "key_length": "8",
+                  "ref": [
+                    "tiktok_shop_monitor_test_rollups_plan_20261016.product_read_models.shop_id"
+                  ],
+                  "rows_examined_per_scan": 1,
+                  "rows_produced_per_join": 24,
+                  "filtered": "100.00",
+                  "cost_info": {
+                    "read_cost": "6.00",
+                    "eval_cost": "2.40",
+                    "prefix_cost": "33.49",
+                    "data_read_per_join": "154K"
+                  },
+                  "used_columns": [
+                    "canonical_name",
+                    "id"
+                  ]
+                }
+              }
+            ]
+          }
+        }
+      ]
+    },
+    "/api/v2/catalog/products?sort=title&page=100": {
+      "samples": 20,
+      "p50_ms": 60.77,
+      "p95_ms": 149.45,
+      "max_bytes": 58391,
+      "statuses": [
+        200
+      ],
+      "plans": [
+        {
+          "query_block": {
+            "select_id": 1,
+            "cost_info": {
+              "query_cost": "10353.49"
+            },
+            "ordering_operation": {
+              "using_filesort": false,
+              "nested_loop": [
+                {
+                  "table": {
+                    "table_name": "product_read_models",
+                    "access_type": "ref",
+                    "possible_keys": [
+                      "ix_read_products_title"
+                    ],
+                    "key": "ix_read_products_title",
+                    "used_key_parts": [
+                      "platform",
+                      "region",
+                      "basis"
+                    ],
+                    "key_length": "270",
+                    "ref": [
+                      "const",
+                      "const",
+                      "const"
+                    ],
+                    "rows_examined_per_scan": 38505,
+                    "rows_produced_per_join": 38,
+                    "filtered": "0.10",
+                    "index_condition": "(`tiktok_shop_monitor_test_rollups_plan_20261016`.`product_read_models`.`schema_version` = 2)",
+                    "cost_info": {
+                      "read_cost": "6489.51",
+                      "eval_cost": "3.85",
+                      "prefix_cost": "10340.01",
+                      "data_read_per_join": "163K"
+                    },
+                    "used_columns": [
+                      "schema_version",
+                      "basis",
+                      "product_id",
+                      "platform",
+                      "region",
+                      "currency",
+                      "pricing_context",
+                      "shop_id",
+                      "title",
+                      "eligible"
+                    ],
+                    "attached_condition": "((`tiktok_shop_monitor_test_rollups_plan_20261016`.`product_read_models`.`pricing_context` = 'public_listed') and (`tiktok_shop_monitor_test_rollups_plan_20261016`.`product_read_models`.`currency` = 'USD') and (`tiktok_shop_monitor_test_rollups_plan_20261016`.`product_read_models`.`eligible` = true))"
+                  }
+                },
+                {
+                  "table": {
+                    "table_name": "shops",
+                    "access_type": "eq_ref",
+                    "possible_keys": [
+                      "PRIMARY",
+                      "uq_shops_identity",
+                      "uq_shops_scope",
+                      "ix_shops_market_status"
+                    ],
+                    "key": "PRIMARY",
+                    "used_key_parts": [
+                      "id"
+                    ],
+                    "key_length": "8",
+                    "ref": [
+                      "tiktok_shop_monitor_test_rollups_plan_20261016.product_read_models.shop_id"
+                    ],
+                    "rows_examined_per_scan": 1,
+                    "rows_produced_per_join": 38,
+                    "filtered": "100.00",
+                    "cost_info": {
+                      "read_cost": "9.63",
+                      "eval_cost": "3.85",
+                      "prefix_cost": "10353.49",
+                      "data_read_per_join": "248K"
+                    },
+                    "used_columns": [
+                      "id",
+                      "platform",
+                      "region"
+                    ],
+                    "attached_condition": "((`tiktok_shop_monitor_test_rollups_plan_20261016`.`shops`.`region` = 'US') and (`tiktok_shop_monitor_test_rollups_plan_20261016`.`shops`.`platform` = 'tiktok_shop'))"
+                  }
+                }
+              ]
+            }
+          }
+        },
+        {
+          "query_block": {
+            "select_id": 1,
+            "cost_info": {
+              "query_cost": "33.50"
+            },
+            "nested_loop": [
+              {
+                "table": {
+                  "table_name": "product_read_models",
+                  "access_type": "range",
+                  "possible_keys": [
+                    "PRIMARY",
+                    "ix_read_products_catalog",
+                    "ix_read_products_scope",
+                    "ix_read_products_recent_scope"
+                  ],
+                  "key": "PRIMARY",
+                  "used_key_parts": [
+                    "schema_version",
+                    "basis",
+                    "product_id"
+                  ],
+                  "key_length": "142",
+                  "rows_examined_per_scan": 24,
+                  "rows_produced_per_join": 24,
+                  "filtered": "100.00",
+                  "cost_info": {
+                    "read_cost": "22.70",
+                    "eval_cost": "2.40",
+                    "prefix_cost": "25.10",
+                    "data_read_per_join": "102K"
+                  },
+                  "used_columns": [
+                    "schema_version",
+                    "basis",
+                    "product_id",
+                    "shop_id",
+                    "payload"
+                  ],
+                  "attached_condition": "((`tiktok_shop_monitor_test_rollups_plan_20261016`.`product_read_models`.`basis` = 'current') and (`tiktok_shop_monitor_test_rollups_plan_20261016`.`product_read_models`.`schema_version` = 2) and (`tiktok_shop_monitor_test_rollups_plan_20261016`.`product_read_models`.`product_id` in (2377,2378,2379,2380,2381,2382,2383,2384,2385,2386,2387,2388,2389,2390,2391,2392,2393,2394,2395,2396,2397,2398,2399,2400)))"
+                }
+              },
+              {
+                "table": {
+                  "table_name": "shops",
+                  "access_type": "eq_ref",
+                  "possible_keys": [
+                    "PRIMARY",
+                    "uq_shops_scope"
+                  ],
+                  "key": "PRIMARY",
+                  "used_key_parts": [
+                    "id"
+                  ],
+                  "key_length": "8",
+                  "ref": [
+                    "tiktok_shop_monitor_test_rollups_plan_20261016.product_read_models.shop_id"
+                  ],
+                  "rows_examined_per_scan": 1,
+                  "rows_produced_per_join": 24,
+                  "filtered": "100.00",
+                  "cost_info": {
+                    "read_cost": "6.00",
+                    "eval_cost": "2.40",
+                    "prefix_cost": "33.50",
+                    "data_read_per_join": "154K"
+                  },
+                  "used_columns": [
+                    "canonical_name",
+                    "id"
+                  ]
+                }
+              }
+            ]
+          }
+        }
+      ]
+    },
+    "/api/v2/catalog/products?shop_id=20&page=10": {
+      "samples": 20,
+      "p50_ms": 48.51,
+      "p95_ms": 56.79,
+      "max_bytes": 58662,
+      "statuses": [
+        200
+      ],
+      "plans": [
+        {
+          "query_block": {
+            "select_id": 1,
+            "cost_info": {
+              "query_cost": "7445.47"
+            },
+            "ordering_operation": {
+              "using_filesort": false,
+              "nested_loop": [
+                {
+                  "table": {
+                    "table_name": "product_read_models",
+                    "access_type": "ref",
+                    "possible_keys": [
+                      "ix_read_products_recent_scope"
+                    ],
+                    "key": "ix_read_products_recent_scope",
+                    "used_key_parts": [
+                      "schema_version",
+                      "basis",
+                      "platform",
+                      "region",
+                      "currency",
+                      "pricing_context",
+                      "eligible"
+                    ],
+                    "key_length": "547",
+                    "ref": [
+                      "const",
+                      "const",
+                      "const",
+                      "const",
+                      "const",
+                      "const",
+                      "const"
+                    ],
+                    "rows_examined_per_scan": 38505,
+                    "rows_produced_per_join": 3850,
+                    "filtered": "10.00",
+                    "backward_index_scan": true,
+                    "using_index": true,
+                    "cost_info": {
+                      "read_cost": "3209.67",
+                      "eval_cost": "385.05",
+                      "prefix_cost": "7060.17",
+                      "data_read_per_join": "16M"
+                    },
+                    "used_columns": [
+                      "schema_version",
+                      "basis",
+                      "product_id",
+                      "platform",
+                      "region",
+                      "currency",
+                      "pricing_context",
+                      "shop_id",
+                      "observed_at",
+                      "eligible"
+                    ],
+                    "attached_condition": "(`tiktok_shop_monitor_test_rollups_plan_20261016`.`product_read_models`.`shop_id` = 20)"
+                  }
+                },
+                {
+                  "table": {
+                    "table_name": "shops",
+                    "access_type": "const",
+                    "possible_keys": [
+                      "PRIMARY",
+                      "uq_shops_identity",
+                      "uq_shops_scope",
+                      "ix_shops_market_status"
+                    ],
+                    "key": "PRIMARY",
+                    "used_key_parts": [
+                      "id"
+                    ],
+                    "key_length": "8",
+                    "ref": [
+                      "const"
+                    ],
+                    "rows_examined_per_scan": 1,
+                    "rows_produced_per_join": 3850,
+                    "filtered": "100.00",
+                    "cost_info": {
+                      "read_cost": "0.25",
+                      "eval_cost": "385.05",
+                      "prefix_cost": "7445.47",
+                      "data_read_per_join": "24M"
+                    },
+                    "used_columns": [
+                      "id",
+                      "platform",
+                      "region"
+                    ],
+                    "attached_condition": "((`tiktok_shop_monitor_test_rollups_plan_20261016`.`shops`.`region` = 'US') and (`tiktok_shop_monitor_test_rollups_plan_20261016`.`shops`.`platform` = 'tiktok_shop'))"
+                  }
+                }
+              ]
+            }
+          }
+        },
+        {
+          "query_block": {
+            "select_id": 1,
+            "cost_info": {
+              "query_cost": "33.50"
+            },
+            "nested_loop": [
+              {
+                "table": {
+                  "table_name": "product_read_models",
+                  "access_type": "range",
+                  "possible_keys": [
+                    "PRIMARY",
+                    "ix_read_products_catalog",
+                    "ix_read_products_scope",
+                    "ix_read_products_recent_scope"
+                  ],
+                  "key": "PRIMARY",
+                  "used_key_parts": [
+                    "schema_version",
+                    "basis",
+                    "product_id"
+                  ],
+                  "key_length": "142",
+                  "rows_examined_per_scan": 24,
+                  "rows_produced_per_join": 24,
+                  "filtered": "100.00",
+                  "cost_info": {
+                    "read_cost": "22.70",
+                    "eval_cost": "2.40",
+                    "prefix_cost": "25.10",
+                    "data_read_per_join": "102K"
+                  },
+                  "used_columns": [
+                    "schema_version",
+                    "basis",
+                    "product_id",
+                    "shop_id",
+                    "payload"
+                  ],
+                  "attached_condition": "((`tiktok_shop_monitor_test_rollups_plan_20261016`.`product_read_models`.`basis` = 'current') and (`tiktok_shop_monitor_test_rollups_plan_20261016`.`product_read_models`.`schema_version` = 2) and (`tiktok_shop_monitor_test_rollups_plan_20261016`.`product_read_models`.`product_id` in (20459,19859,19259,18659,18059,17459,16859,16259,15659,15059,14459,13859,13259,12659,12059,11459,10859,10259,9659,9059,8459,7859,7259,6659)))"
+                }
+              },
+              {
+                "table": {
+                  "table_name": "shops",
+                  "access_type": "eq_ref",
+                  "possible_keys": [
+                    "PRIMARY",
+                    "uq_shops_scope"
+                  ],
+                  "key": "PRIMARY",
+                  "used_key_parts": [
+                    "id"
+                  ],
+                  "key_length": "8",
+                  "ref": [
+                    "tiktok_shop_monitor_test_rollups_plan_20261016.product_read_models.shop_id"
+                  ],
+                  "rows_examined_per_scan": 1,
+                  "rows_produced_per_join": 24,
+                  "filtered": "100.00",
+                  "cost_info": {
+                    "read_cost": "6.00",
+                    "eval_cost": "2.40",
+                    "prefix_cost": "33.50",
+                    "data_read_per_join": "154K"
+                  },
+                  "used_columns": [
+                    "canonical_name",
+                    "id"
+                  ]
+                }
+              }
+            ]
+          }
+        }
+      ]
+    },
+    "/api/v2/catalog/products?category=Dresses&page=20": {
+      "samples": 20,
+      "p50_ms": 37.57,
+      "p95_ms": 48.11,
+      "max_bytes": 57954,
+      "statuses": [
+        200
+      ],
+      "plans": [
+        {
+          "query_block": {
+            "select_id": 1,
+            "cost_info": {
+              "query_cost": "11640.62"
+            },
+            "ordering_operation": {
+              "using_filesort": false,
+              "nested_loop": [
+                {
+                  "table": {
+                    "table_name": "product_read_models",
+                    "access_type": "ref",
+                    "possible_keys": [
+                      "ix_read_products_recent_scope"
+                    ],
+                    "key": "ix_read_products_recent_scope",
+                    "used_key_parts": [
+                      "schema_version",
+                      "basis",
+                      "platform",
+                      "region",
+                      "currency",
+                      "pricing_context",
+                      "eligible"
+                    ],
+                    "key_length": "547",
+                    "ref": [
+                      "const",
+                      "const",
+                      "const",
+                      "const",
+                      "const",
+                      "const",
+                      "const"
+                    ],
+                    "rows_examined_per_scan": 38505,
+                    "rows_produced_per_join": 3850,
+                    "filtered": "10.00",
+                    "backward_index_scan": true,
+                    "cost_info": {
+                      "read_cost": "6442.45",
+                      "eval_cost": "385.05",
+                      "prefix_cost": "10292.95",
+                      "data_read_per_join": "16M"
+                    },
+                    "used_columns": [
+                      "schema_version",
+                      "basis",
+                      "product_id",
+                      "platform",
+                      "region",
+                      "currency",
+                      "pricing_context",
+                      "shop_id",
+                      "category",
+                      "observed_at",
+                      "eligible"
+                    ],
+                    "attached_condition": "(`tiktok_shop_monitor_test_rollups_plan_20261016`.`product_read_models`.`category` = 'Dresses')"
+                  }
+                },
+                {
+                  "table": {
+                    "table_name": "shops",
+                    "access_type": "eq_ref",
+                    "possible_keys": [
+                      "PRIMARY",
+                      "uq_shops_identity",
+                      "uq_shops_scope",
+                      "ix_shops_market_status"
+                    ],
+                    "key": "PRIMARY",
+                    "used_key_parts": [
+                      "id"
+                    ],
+                    "key_length": "8",
+                    "ref": [
+                      "tiktok_shop_monitor_test_rollups_plan_20261016.product_read_models.shop_id"
+                    ],
+                    "rows_examined_per_scan": 1,
+                    "rows_produced_per_join": 3850,
+                    "filtered": "100.00",
+                    "cost_info": {
+                      "read_cost": "962.63",
+                      "eval_cost": "385.05",
+                      "prefix_cost": "11640.62",
+                      "data_read_per_join": "24M"
+                    },
+                    "used_columns": [
+                      "id",
+                      "platform",
+                      "region"
+                    ],
+                    "attached_condition": "((`tiktok_shop_monitor_test_rollups_plan_20261016`.`shops`.`region` = 'US') and (`tiktok_shop_monitor_test_rollups_plan_20261016`.`shops`.`platform` = 'tiktok_shop'))"
+                  }
+                }
+              ]
+            }
+          }
+        },
+        {
+          "query_block": {
+            "select_id": 1,
+            "cost_info": {
+              "query_cost": "33.35"
+            },
+            "nested_loop": [
+              {
+                "table": {
+                  "table_name": "product_read_models",
+                  "access_type": "range",
+                  "possible_keys": [
+                    "PRIMARY",
+                    "ix_read_products_catalog",
+                    "ix_read_products_scope",
+                    "ix_read_products_recent_scope"
+                  ],
+                  "key": "PRIMARY",
+                  "used_key_parts": [
+                    "schema_version",
+                    "basis",
+                    "product_id"
+                  ],
+                  "key_length": "142",
+                  "rows_examined_per_scan": 24,
+                  "rows_produced_per_join": 24,
+                  "filtered": "100.00",
+                  "cost_info": {
+                    "read_cost": "22.55",
+                    "eval_cost": "2.40",
+                    "prefix_cost": "24.95",
+                    "data_read_per_join": "102K"
+                  },
+                  "used_columns": [
+                    "schema_version",
+                    "basis",
+                    "product_id",
+                    "shop_id",
+                    "payload"
+                  ],
+                  "attached_condition": "((`tiktok_shop_monitor_test_rollups_plan_20261016`.`product_read_models`.`basis` = 'current') and (`tiktok_shop_monitor_test_rollups_plan_20261016`.`product_read_models`.`schema_version` = 2) and (`tiktok_shop_monitor_test_rollups_plan_20261016`.`product_read_models`.`product_id` in (13204,12904,12604,12304,12004,11704,11404,11104,10804,10504,10204,9904,9604,9304,9004,8704,8404,8104,7804,7504,7204,6904,6604,6304)))"
+                }
+              },
+              {
+                "table": {
+                  "table_name": "shops",
+                  "access_type": "eq_ref",
+                  "possible_keys": [
+                    "PRIMARY",
+                    "uq_shops_scope"
+                  ],
+                  "key": "PRIMARY",
+                  "used_key_parts": [
+                    "id"
+                  ],
+                  "key_length": "8",
+                  "ref": [
+                    "tiktok_shop_monitor_test_rollups_plan_20261016.product_read_models.shop_id"
+                  ],
+                  "rows_examined_per_scan": 1,
+                  "rows_produced_per_join": 24,
+                  "filtered": "100.00",
+                  "cost_info": {
+                    "read_cost": "6.00",
+                    "eval_cost": "2.40",
+                    "prefix_cost": "33.35",
+                    "data_read_per_join": "154K"
+                  },
+                  "used_columns": [
+                    "canonical_name",
+                    "id"
+                  ]
+                }
+              }
+            ]
+          }
+        }
+      ]
+    },
+    "/api/v2/catalog/products?q=Dress&sort=price_desc&page=20": {
+      "samples": 20,
+      "p50_ms": 34.4,
+      "p95_ms": 40.29,
+      "max_bytes": 58341,
+      "statuses": [
+        200
+      ],
+      "plans": [
+        {
+          "query_block": {
+            "select_id": 1,
+            "cost_info": {
+              "query_cost": "10338.47"
+            },
+            "ordering_operation": {
+              "using_filesort": false,
+              "nested_loop": [
+                {
+                  "table": {
+                    "table_name": "product_read_models",
+                    "access_type": "ref",
+                    "possible_keys": [
+                      "ix_read_products_price"
+                    ],
+                    "key": "ix_read_products_price",
+                    "used_key_parts": [
+                      "platform",
+                      "region",
+                      "basis"
+                    ],
+                    "key_length": "270",
+                    "ref": [
+                      "const",
+                      "const",
+                      "const"
+                    ],
+                    "rows_examined_per_scan": 38505,
+                    "rows_produced_per_join": 38,
+                    "filtered": "0.10",
+                    "backward_index_scan": true,
+                    "cost_info": {
+                      "read_cost": "6474.50",
+                      "eval_cost": "3.85",
+                      "prefix_cost": "10325.00",
+                      "data_read_per_join": "163K"
+                    },
+                    "used_columns": [
+                      "schema_version",
+                      "basis",
+                      "product_id",
+                      "platform",
+                      "region",
+                      "currency",
+                      "pricing_context",
+                      "shop_id",
+                      "platform_product_id",
+                      "title",
+                      "brand",
+                      "price_min",
+                      "eligible"
+                    ],
+                    "attached_condition": "((`tiktok_shop_monitor_test_rollups_plan_20261016`.`product_read_models`.`pricing_context` = 'public_listed') and (`tiktok_shop_monitor_test_rollups_plan_20261016`.`product_read_models`.`currency` = 'USD') and (`tiktok_shop_monitor_test_rollups_plan_20261016`.`product_read_models`.`eligible` = true) and (`tiktok_shop_monitor_test_rollups_plan_20261016`.`product_read_models`.`schema_version` = 2))"
+                  }
+                },
+                {
+                  "table": {
+                    "table_name": "shops",
+                    "access_type": "eq_ref",
+                    "possible_keys": [
+                      "PRIMARY",
+                      "uq_shops_identity",
+                      "uq_shops_scope",
+                      "ix_shops_market_status"
+                    ],
+                    "key": "PRIMARY",
+                    "used_key_parts": [
+                      "id"
+                    ],
+                    "key_length": "8",
+                    "ref": [
+                      "tiktok_shop_monitor_test_rollups_plan_20261016.product_read_models.shop_id"
+                    ],
+                    "rows_examined_per_scan": 1,
+                    "rows_produced_per_join": 38,
+                    "filtered": "100.00",
+                    "cost_info": {
+                      "read_cost": "9.63",
+                      "eval_cost": "3.85",
+                      "prefix_cost": "10338.48",
+                      "data_read_per_join": "248K"
+                    },
+                    "used_columns": [
+                      "canonical_name",
+                      "id",
+                      "platform",
+                      "region"
+                    ],
+                    "attached_condition": "((`tiktok_shop_monitor_test_rollups_plan_20261016`.`shops`.`region` = 'US') and (`tiktok_shop_monitor_test_rollups_plan_20261016`.`shops`.`platform` = 'tiktok_shop') and ((`tiktok_shop_monitor_test_rollups_plan_20261016`.`product_read_models`.`title` like <cache>(concat('%','Dress','%')) escape '/') or (`tiktok_shop_monitor_test_rollups_plan_20261016`.`product_read_models`.`brand` like <cache>(concat('%','Dress','%')) escape '/') or (`tiktok_shop_monitor_test_rollups_plan_20261016`.`product_read_models`.`platform_product_id` like <cache>(concat('%','Dress','%')) escape '/') or (`tiktok_shop_monitor_test_rollups_plan_20261016`.`shops`.`canonical_name` like <cache>(concat('%','Dress','%')) escape '/')))"
+                  }
+                }
+              ]
+            }
+          }
+        },
+        {
+          "query_block": {
+            "select_id": 1,
+            "cost_info": {
+              "query_cost": "33.45"
+            },
+            "nested_loop": [
+              {
+                "table": {
+                  "table_name": "product_read_models",
+                  "access_type": "range",
+                  "possible_keys": [
+                    "PRIMARY",
+                    "ix_read_products_catalog",
+                    "ix_read_products_scope",
+                    "ix_read_products_recent_scope"
+                  ],
+                  "key": "PRIMARY",
+                  "used_key_parts": [
+                    "schema_version",
+                    "basis",
+                    "product_id"
+                  ],
+                  "key_length": "142",
+                  "rows_examined_per_scan": 24,
+                  "rows_produced_per_join": 24,
+                  "filtered": "100.00",
+                  "cost_info": {
+                    "read_cost": "22.65",
+                    "eval_cost": "2.40",
+                    "prefix_cost": "25.05",
+                    "data_read_per_join": "102K"
+                  },
+                  "used_columns": [
+                    "schema_version",
+                    "basis",
+                    "product_id",
+                    "shop_id",
+                    "payload"
+                  ],
+                  "attached_condition": "((`tiktok_shop_monitor_test_rollups_plan_20261016`.`product_read_models`.`basis` = 'current') and (`tiktok_shop_monitor_test_rollups_plan_20261016`.`product_read_models`.`schema_version` = 2) and (`tiktok_shop_monitor_test_rollups_plan_20261016`.`product_read_models`.`product_id` in (19893,9893,49892,39892,29892,19892,9892,49891,39891,29891,19891,49890,39890,19890,9890,39889,29889,19889,9889,49888,39888,29888,19888,9888)))"
+                }
+              },
+              {
+                "table": {
+                  "table_name": "shops",
+                  "access_type": "eq_ref",
+                  "possible_keys": [
+                    "PRIMARY",
+                    "uq_shops_scope"
+                  ],
+                  "key": "PRIMARY",
+                  "used_key_parts": [
+                    "id"
+                  ],
+                  "key_length": "8",
+                  "ref": [
+                    "tiktok_shop_monitor_test_rollups_plan_20261016.product_read_models.shop_id"
+                  ],
+                  "rows_examined_per_scan": 1,
+                  "rows_produced_per_join": 24,
+                  "filtered": "100.00",
+                  "cost_info": {
+                    "read_cost": "6.00",
+                    "eval_cost": "2.40",
+                    "prefix_cost": "33.45",
+                    "data_read_per_join": "154K"
+                  },
+                  "used_columns": [
+                    "canonical_name",
+                    "id"
+                  ]
+                }
+              }
+            ]
+          }
+        }
+      ]
+    },
+    "/api/v2/catalog/products?attribute=color&value=Red&page=20": {
+      "samples": 20,
+      "p50_ms": 43.9,
+      "p95_ms": 52.31,
+      "max_bytes": 58613,
+      "statuses": [
+        200
+      ],
+      "plans": [
+        {
+          "query_block": {
+            "select_id": 1,
+            "cost_info": {
+              "query_cost": "20536.92"
+            },
+            "ordering_operation": {
+              "using_filesort": false,
+              "nested_loop": [
+                {
+                  "table": {
+                    "table_name": "product_read_models",
+                    "access_type": "ref",
+                    "possible_keys": [
+                      "ix_read_products_recent_scope"
+                    ],
+                    "key": "ix_read_products_recent_scope",
+                    "used_key_parts": [
+                      "schema_version",
+                      "basis",
+                      "platform",
+                      "region",
+                      "currency",
+                      "pricing_context",
+                      "eligible"
+                    ],
+                    "key_length": "547",
+                    "ref": [
+                      "const",
+                      "const",
+                      "const",
+                      "const",
+                      "const",
+                      "const",
+                      "const"
+                    ],
+                    "rows_examined_per_scan": 38505,
+                    "rows_produced_per_join": 38505,
+                    "filtered": "100.00",
+                    "backward_index_scan": true,
+                    "using_index": true,
+                    "cost_info": {
+                      "read_cost": "3209.67",
+                      "eval_cost": "3850.50",
+                      "prefix_cost": "7060.17",
+                      "data_read_per_join": "160M"
+                    },
+                    "used_columns": [
+                      "schema_version",
+                      "basis",
+                      "product_id",
+                      "platform",
+                      "region",
+                      "currency",
+                      "pricing_context",
+                      "shop_id",
+                      "observed_at",
+                      "eligible"
+                    ],
+                    "attached_condition": "((/* select#2 */ select 1 AS `anon_1` from `tiktok_shop_monitor_test_rollups_plan_20261016`.`product_read_attributes` where ((`tiktok_shop_monitor_test_rollups_plan_20261016`.`product_read_attributes`.`value` = 'Red') and (`tiktok_shop_monitor_test_rollups_plan_20261016`.`product_read_attributes`.`attribute` = 'color') and (`tiktok_shop_monitor_test_rollups_plan_20261016`.`product_read_attributes`.`basis` = 'current') and (`tiktok_shop_monitor_test_rollups_plan_20261016`.`product_read_attributes`.`schema_version` = 2) and (`tiktok_shop_monitor_test_rollups_plan_20261016`.`product_read_attributes`.`product_id` = `tiktok_shop_monitor_test_rollups_plan_20261016`.`product_read_models`.`product_id`)) limit 1) is not null)",
+                    "attached_subqueries": [
+                      {
+                        "dependent": true,
+                        "cacheable": false,
+                        "query_block": {
+                          "select_id": 2,
+                          "cost_info": {
+                            "query_cost": "0.87"
+                          },
+                          "table": {
+                            "table_name": "product_read_attributes",
+                            "access_type": "ref",
+                            "possible_keys": [
+                              "PRIMARY",
+                              "ix_read_attribute_value"
+                            ],
+                            "key": "ix_read_attribute_value",
+                            "used_key_parts": [
+                              "schema_version",
+                              "basis",
+                              "attribute",
+                              "value",
+                              "product_id"
+                            ],
+                            "key_length": "722",
+                            "ref": [
+                              "const",
+                              "const",
+                              "const",
+                              "const",
+                              "tiktok_shop_monitor_test_rollups_plan_20261016.product_read_models.product_id"
+                            ],
+                            "rows_examined_per_scan": 1,
+                            "rows_produced_per_join": 1,
+                            "filtered": "100.00",
+                            "cost_info": {
+                              "read_cost": "0.77",
+                              "eval_cost": "0.10",
+                              "prefix_cost": "0.87",
+                              "data_read_per_join": "224"
+                            },
+                            "used_columns": [
+                              "schema_version",
+                              "basis",
+                              "product_id",
+                              "attribute",
+                              "value"
+                            ],
+                            "attached_condition": "(`tiktok_shop_monitor_test_rollups_plan_20261016`.`product_read_attributes`.`value` = 'Red')"
+                          }
+                        }
+                      }
+                    ]
+                  }
+                },
+                {
+                  "table": {
+                    "table_name": "shops",
+                    "access_type": "eq_ref",
+                    "possible_keys": [
+                      "PRIMARY",
+                      "uq_shops_identity",
+                      "uq_shops_scope",
+                      "ix_shops_market_status"
+                    ],
+                    "key": "PRIMARY",
+                    "used_key_parts": [
+                      "id"
+                    ],
+                    "key_length": "8",
+                    "ref": [
+                      "tiktok_shop_monitor_test_rollups_plan_20261016.product_read_models.shop_id"
+                    ],
+                    "rows_examined_per_scan": 1,
+                    "rows_produced_per_join": 38505,
+                    "filtered": "100.00",
+                    "cost_info": {
+                      "read_cost": "9626.25",
+                      "eval_cost": "3850.50",
+                      "prefix_cost": "20536.92",
+                      "data_read_per_join": "242M"
+                    },
+                    "used_columns": [
+                      "id",
+                      "platform",
+                      "region"
+                    ],
+                    "attached_condition": "((`tiktok_shop_monitor_test_rollups_plan_20261016`.`shops`.`region` = 'US') and (`tiktok_shop_monitor_test_rollups_plan_20261016`.`shops`.`platform` = 'tiktok_shop'))"
+                  }
+                }
+              ]
+            }
+          }
+        },
+        {
+          "query_block": {
+            "select_id": 1,
+            "cost_info": {
+              "query_cost": "33.50"
+            },
+            "nested_loop": [
+              {
+                "table": {
+                  "table_name": "product_read_models",
+                  "access_type": "range",
+                  "possible_keys": [
+                    "PRIMARY",
+                    "ix_read_products_catalog",
+                    "ix_read_products_scope",
+                    "ix_read_products_recent_scope"
+                  ],
+                  "key": "PRIMARY",
+                  "used_key_parts": [
+                    "schema_version",
+                    "basis",
+                    "product_id"
+                  ],
+                  "key_length": "142",
+                  "rows_examined_per_scan": 24,
+                  "rows_produced_per_join": 24,
+                  "filtered": "100.00",
+                  "cost_info": {
+                    "read_cost": "22.70",
+                    "eval_cost": "2.40",
+                    "prefix_cost": "25.10",
+                    "data_read_per_join": "102K"
+                  },
+                  "used_columns": [
+                    "schema_version",
+                    "basis",
+                    "product_id",
+                    "shop_id",
+                    "payload"
+                  ],
+                  "attached_condition": "((`tiktok_shop_monitor_test_rollups_plan_20261016`.`product_read_models`.`basis` = 'current') and (`tiktok_shop_monitor_test_rollups_plan_20261016`.`product_read_models`.`schema_version` = 2) and (`tiktok_shop_monitor_test_rollups_plan_20261016`.`product_read_models`.`product_id` in (12902,12602,12302,12002,11702,11402,11102,10802,10502,10202,9902,9602,9302,9002,8702,8402,8102,7802,7502,7202,6902,6602,6302,6002)))"
+                }
+              },
+              {
+                "table": {
+                  "table_name": "shops",
+                  "access_type": "eq_ref",
+                  "possible_keys": [
+                    "PRIMARY",
+                    "uq_shops_scope"
+                  ],
+                  "key": "PRIMARY",
+                  "used_key_parts": [
+                    "id"
+                  ],
+                  "key_length": "8",
+                  "ref": [
+                    "tiktok_shop_monitor_test_rollups_plan_20261016.product_read_models.shop_id"
+                  ],
+                  "rows_examined_per_scan": 1,
+                  "rows_produced_per_join": 24,
+                  "filtered": "100.00",
+                  "cost_info": {
+                    "read_cost": "6.00",
+                    "eval_cost": "2.40",
+                    "prefix_cost": "33.50",
+                    "data_read_per_join": "154K"
+                  },
+                  "used_columns": [
+                    "canonical_name",
+                    "id"
+                  ]
+                }
+              }
+            ]
+          }
+        }
+      ]
+    },
+    "/api/v2/analytics/overview": {
+      "samples": 20,
+      "p50_ms": 24.14,
+      "p95_ms": 28.35,
+      "max_bytes": 15866,
+      "statuses": [
+        200
+      ],
+      "plans": []
+    },
+    "/api/v2/analytics/workbench?topic=market": {
+      "samples": 20,
+      "p50_ms": 34.38,
+      "p95_ms": 37.23,
+      "max_bytes": 47611,
+      "statuses": [
+        200
+      ],
+      "plans": []
+    },
+    "/api/v2/analytics/workbench?topic=attributes": {
+      "samples": 20,
+      "p50_ms": 35.14,
+      "p95_ms": 41.87,
+      "max_bytes": 16728,
+      "statuses": [
+        200
+      ],
+      "plans": []
+    },
+    "/api/v2/catalog/stats": {
+      "samples": 20,
+      "p50_ms": 25.02,
+      "p95_ms": 30.75,
+      "max_bytes": 3274,
+      "statuses": [
+        200
+      ],
+      "plans": []
+    }
+  }
+}

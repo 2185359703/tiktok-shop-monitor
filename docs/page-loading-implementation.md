@@ -37,6 +37,7 @@
 ```powershell
 .\.venv\Scripts\python.exe -m scripts.migrate_analytics --execute
 .\.venv\Scripts\python.exe -m scripts.migrate_analytics_rollups --execute
+.\.venv\Scripts\python.exe -m scripts.migrate_recent_index --execute
 ```
 
 008 迁移创建 `product_read_models`、`event_read_models`、`analytics_refresh_requests` 和 `analytics_snapshots`，不 ALTER 原业务表。随后执行 `python -m scripts.migrate_ui_indexes --execute`，为投影分页、店铺/标题/SKU/库存排序、最近详情和任务/报告查询补充七个索引。009 使用在线索引 DDL，不修改列和业务行；重复执行会跳过已有索引。对应 SQL 为 [008_analytics_read_models.sql](../migrations/008_analytics_read_models.sql) 和 [009_ui_read_indexes.sql](../migrations/009_ui_read_indexes.sql)。完整模式快照已同步注册模型。
@@ -46,6 +47,8 @@
 010 新增 `analytics_product_rollups` 和 `product_read_attributes`，不修改原业务表。每个口径按商品 ID 划分最多 128 个商品的分片。发布商品投影时，在同一事务中替换分片成员并重算该片摘要；修订号阻止迟到的回填覆盖新贡献，回滚也会撤销摘要变化。默认图表只合并摘要，保留全部价格以计算精确中位数、原始属性标签和 SKU 计数。新鲜度分桶按读取时刻计算；店铺名称从当前店铺表读取。
 
 属性标签随商品投影在同一事务中替换，颜色/尺码和服装属性筛选使用独立的值索引，避免逐页展开全部商品 JSON。前缀索引只用于缩小候选范围，完整标签继续按数据库的比较规则校验，重复标签不会重复返回商品。首次回填完成前使用原有筛选实现。
+
+011 在线新增专用于最近观察排序的紧凑覆盖索引。实际 MySQL 执行计划确认它直接倒序读取索引；原宽索引在这条查询上仍触发全范围排序。翻页先取 ID，再读取这一页的 JSON，类目/属性筛选同样沿有序索引推进。
 
 分片首次回填可中断恢复，完成前仍使用原来的完整查询。任意过滤继续沿用 SQL 过滤语义；不使用默认范围摘要替代筛选结果。已经启用 v2 的服务器可用发布脚本的 `--phase upgrade` 添加新表并启动候选 API/分析服务；等待 `scripts.analytics_status` 的 `rollup_backfill.ready` 后再执行 `--phase cutover`。升级会保存上一份公开覆盖配置，复用基础设施和原有采集参数。
 

@@ -168,6 +168,8 @@ CREATE INDEX ix_read_products_price ON product_read_models (platform, region, ba
 
 CREATE INDEX ix_read_products_recent ON product_read_models (platform, region, basis, observed_at, product_id);
 
+CREATE INDEX ix_read_products_recent_scope ON product_read_models (schema_version, basis, platform, region, currency, pricing_context, eligible, observed_at, product_id, shop_id);
+
 CREATE INDEX ix_read_products_scope ON product_read_models (schema_version, basis, platform, region, currency, pricing_context, eligible, shop_id, product_id);
 
 CREATE INDEX ix_read_products_shop ON product_read_models (platform, region, basis, shop_id, product_id);

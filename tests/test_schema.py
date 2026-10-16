@@ -40,6 +40,8 @@ def test_current_schema_matches_registered_models():
 def test_ui_index_migration_matches_models():
     from scripts.migrate_ui_indexes import additive_sql
     assert (MIGRATIONS / "009_ui_read_indexes.sql").read_text(encoding="utf-8") == additive_sql()
+    from scripts.migrate_recent_index import additive_sql as recent_sql
+    assert (MIGRATIONS / "011_ui_recent_index.sql").read_text(encoding="utf-8") == recent_sql()
 
 
 def test_all_tables_and_columns_have_chinese_comments():
@@ -67,6 +69,10 @@ def test_comment_migration_matches_models():
 def test_additive_migration_table_and_index_definitions_match_models(filename, names):
     saved = (MIGRATIONS / filename).read_text(encoding="utf-8")
     generated = mysql_ddl(table_names=names)
+    if filename == "008_analytics_read_models.sql":
+        # 011 adds an index without rewriting the earlier deployed migration.
+        generated = "\n".join(line for line in generated.split("\n") if not line.startswith("CREATE INDEX ix_read_products_recent_scope "))
+        generated = generated.replace("\n\n\n", "\n\n")
     # Headers differ because additive migrations select an existing database. Every
     # CREATE TABLE, column, CHECK, FK, unique constraint and index is checked exactly.
     assert normalized_sql(saved[saved.index("CREATE TABLE IF NOT EXISTS "):]) == generated[generated.index("CREATE TABLE IF NOT EXISTS "):]

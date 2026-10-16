@@ -9,7 +9,7 @@ from app.models import Product, Shop
 from app.models.analytics_read import AnalyticsProductRollup
 from app.services.analytics_projection import build_product, publish_product
 from app.services.analytics_queries import list_products, parameters
-from app.services.analytics_refresh import SUMMARY_KINDS, claim_batch, enqueue, job_row
+from app.services.analytics_refresh import SUMMARY_KINDS, claim_batch, enqueue, job_row, now, scope
 from app.services.analytics_rollup import backfill_rollups, control_params, read_totals, rollups_ready, update_rollups
 from app.services.analytics_snapshot import build_catalog_stats, build_current, build_overview
 from app.settings import Settings
@@ -145,3 +145,13 @@ def test_default_statistics_lane_cannot_be_taken_by_a_heavy_filtered_job(analyti
                          default_statistics=False)
     assert default[0].parameters == {**params, "lookback_hours": 24}
     assert custom[0].parameters == {**params, "shop_id": 1}
+
+
+def test_rollup_upgrade_refreshes_defaults_without_inheriting_old_due_times(analytics_db):
+    project(analytics_db)
+    config = Settings()
+    source = job_row(analytics_db, "control", {**scope(config), "name": "backfill"})
+    source.parameters = {**source.parameters, "ready": True}
+    request = enqueue(analytics_db, "catalog_stats", parameters(config), available_at=now(analytics_db) + timedelta(minutes=5))
+    enable(analytics_db)
+    assert request.available_at <= now(analytics_db)

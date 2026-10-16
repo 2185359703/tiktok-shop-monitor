@@ -77,7 +77,8 @@ class Release:
         print(json.dumps({"phase": phase, **values}, ensure_ascii=False), flush=True)
 
     def containers(self, service):
-        ids = self.run([*self.base, "ps", "-a", "-q", service]).split()
+        ids = self.run(["docker", "ps", "-a", "-q", "--filter", "label=com.docker.compose.project=tiktok-shop-monitor",
+                        "--filter", "label=com.docker.compose.service=" + service]).split()
         result = []
         for identifier in ids:
             value = json.loads(self.run(["docker", "inspect", "--format", "{{json .}}", identifier]))
@@ -197,8 +198,9 @@ class Release:
         self.save("upgrade_prepared", base_files=[str(path) for path in self.base_files],
             previous_images={name: [item["Config"]["Image"] for item in items] for name, items in previous.items()},
             previous_public_overlay=str(saved_overlay), preserved_runtime=preserved)
-        self.run(["docker", "run", "--rm", "--network", networks[0], "--env-file", str(self.root / "deployment.env"),
-            self.image, "python", "-m", "scripts.migrate_analytics_rollups", "--execute"], timeout=60)
+        for module in ("scripts.migrate_analytics_rollups", "scripts.migrate_recent_index"):
+            self.run(["docker", "run", "--rm", "--network", networks[0], "--env-file", str(self.root / "deployment.env"),
+                self.image, "python", "-m", module, "--execute"], timeout=90)
         self.write_overlay(public=False)
         self.up("analytics", "api-candidate")
         self.save("warming", public_api_changed=False, source_writers_changed=False)
@@ -228,7 +230,7 @@ class Release:
             self.stop_sources()
             backup = self.backup_schema_and_control(mysql)
             self.save("backed_up", **backup)
-            for module in ("scripts.migrate_shop_profiles", "scripts.migrate_product_reviews", "scripts.migrate_analytics", "scripts.migrate_ui_indexes", "scripts.migrate_analytics_rollups"):
+            for module in ("scripts.migrate_shop_profiles", "scripts.migrate_product_reviews", "scripts.migrate_analytics", "scripts.migrate_ui_indexes", "scripts.migrate_analytics_rollups", "scripts.migrate_recent_index"):
                 result = self.run(["docker", "run", "--rm", "--network", networks[0], "--env-file", str(self.root / "deployment.env"),
                                   "--env", "ANALYTICS_ENABLED=0", self.image, "python", "-m", module, "--execute"])
                 self.save("migrating", migration=module, result=json.loads(result))

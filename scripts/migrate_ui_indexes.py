@@ -29,11 +29,11 @@ def additive_sql():
         statement(index) for index in INDEXES) + ";\n"
 
 
-def migration_plan(connection):
+def migration_plan(connection, indexes=INDEXES):
     inspector = inspect(connection)
     tables = set(inspector.get_table_names())
     actions = []
-    for index in INDEXES:
+    for index in indexes:
         if index.table.name not in tables:
             raise ValueError("Create source and read-model tables before adding UI indexes.")
         actual = next((item for item in inspector.get_indexes(index.table.name) if item["name"] == index.name), None)
@@ -44,25 +44,25 @@ def migration_plan(connection):
     return actions
 
 
-def migrate(engine, *, execute=False):
+def migrate(engine, *, execute=False, indexes=INDEXES, lock_name=LOCK_NAME):
     require_supported_server(engine)
     with engine.connect() as connection:
-        if execute and connection.scalar(text("SELECT GET_LOCK(:name, 0)"), {"name": LOCK_NAME}) != 1:
+        if execute and connection.scalar(text("SELECT GET_LOCK(:name, 0)"), {"name": lock_name}) != 1:
             raise ValueError("Another UI index migration is running.")
         old_wait = connection.scalar(text("SELECT @@SESSION.lock_wait_timeout"))
         try:
-            actions = migration_plan(connection)
+            actions = migration_plan(connection, indexes)
             if execute:
                 connection.execute(text("SET SESSION lock_wait_timeout=10"))
                 for sql in actions:
                     connection.exec_driver_sql(sql)
-            remaining = migration_plan(connection) if execute else actions
+            remaining = migration_plan(connection, indexes) if execute else actions
             return {"ready": not remaining, "executed_statements": len(actions) if execute else 0,
                     "pending_statements": len(remaining), "data_rows_modified": 0}
         finally:
             connection.execute(text("SET SESSION lock_wait_timeout=:value"), {"value": old_wait})
             if execute:
-                connection.execute(text("SELECT RELEASE_LOCK(:name)"), {"name": LOCK_NAME})
+                connection.execute(text("SELECT RELEASE_LOCK(:name)"), {"name": lock_name})
 
 
 def main(argv=None):
