@@ -90,6 +90,10 @@ def test_mysql_query_budgets_are_restored_on_pool_return(mysql_engine):
         assert db.scalar(text("SELECT @@SESSION.innodb_lock_wait_timeout")) == 1
     with factory() as db:
         assert db.execute(text("SELECT @@SESSION.max_execution_time, @@SESSION.innodb_lock_wait_timeout")).one() == original
+    with source_reader(factory, select_timeout_ms=30000) as db:
+        assert db.scalar(text("SELECT @@SESSION.max_execution_time")) == 30000
+    with factory() as db:
+        assert db.execute(text("SELECT @@SESSION.max_execution_time, @@SESSION.innodb_lock_wait_timeout")).one() == original
     with pytest.raises(RuntimeError):
         with source_reader(factory) as db:
             raise RuntimeError("interrupted")

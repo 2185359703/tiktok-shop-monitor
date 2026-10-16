@@ -22,7 +22,8 @@ class AsyncAnalyticsRunner:
 
     def build(self, leases):
         lease = leases[0]
-        with source_reader(self.database.sync_factory) as db:
+        with source_reader(self.database.sync_factory,
+                           select_timeout_ms=30000 if lease.kind in STAT_KINDS else 3000) as db:
             if lease.kind == "product_projection":
                 data = build_products(db, self.config, {int(item.parameters["product_id"]): item.revision for item in leases})
                 return lambda session: publish_product(session, self.config, data)

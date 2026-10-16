@@ -97,14 +97,16 @@ def maintain(db, config):
 
 
 @contextmanager
-def source_reader(factory, *, write=False):
+def source_reader(factory, *, write=False, select_timeout_ms=3000):
+    if not 1 <= select_timeout_ms <= 30000:
+        raise ValueError("analytics_select_budget")
     with factory() as db:
         if db.bind.dialect.name == "mysql":
             connection = db.connection(execution_options={"isolation_level": "REPEATABLE READ"})
             # All queries are bounded, including a transaction waiting for a lock.
             old_select = db.scalar(text("SELECT @@SESSION.max_execution_time"))
             old_lock = db.scalar(text("SELECT @@SESSION.innodb_lock_wait_timeout"))
-            db.execute(text("SET SESSION MAX_EXECUTION_TIME=3000"))
+            db.execute(text("SET SESSION MAX_EXECUTION_TIME=:value"), {"value": select_timeout_ms})
             db.execute(text("SET SESSION innodb_lock_wait_timeout=1"))
             try:
                 yield db
@@ -143,7 +145,9 @@ class AnalyticsRunner:
         thread = threading.Thread(target=renew, daemon=True)
         thread.start()
         try:
-            with (heavy_slot(self.factory, self.config) if lease.kind in STAT_KINDS else nullcontext()), source_reader(self.factory) as db:
+            with (heavy_slot(self.factory, self.config) if lease.kind in STAT_KINDS else nullcontext()), source_reader(
+                self.factory, select_timeout_ms=30000 if lease.kind in STAT_KINDS else 3000
+            ) as db:
                 if lease.kind == "product_projection":
                     data = build_product(db, self.config, int(lease.parameters["product_id"]), lease.revision)
                     publish = lambda session: publish_product(session, self.config, data)
