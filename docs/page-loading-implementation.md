@@ -75,7 +75,7 @@ MySQL 测试库必须是尚不存在的 `tiktok_shop_monitor_test_*`，主机仅
 
 可使用 `tests/serve_ui_read_models.py --help` 启动明确标记为 TEST FIXTURE 的独立浏览器环境。该入口只接受全新的本地测试库，不能指向已有库。浏览器检查已确认分页请求与摘要请求分开，翻页、筛选、主题切换、事件和报告清单使用实际 FastAPI/MySQL 链路；这不构成生产规模延迟验收。
 
-初始验证记录见 [实施验证摘要](evidence/page-loading-implementation-20261015.json)。2026-10-16 的最终完整回归为 612 passed、2 skipped；跳过项依赖 Redis。回归包含分页、批量预取、精简统计字段、不同时间窗口共用聚合和租约隔离检查。前端请求缓存的 5 项 Node 检查通过。
+初始验证记录见 [实施验证摘要](evidence/page-loading-implementation-20261015.json)。2026-10-16 的完整回归为 614 passed、2 skipped；跳过项依赖 Redis。回归包含分页、批量预取、精简统计字段、不同时间窗口共用聚合、队列批量合并和租约隔离检查。随后默认分页的索引约束通过 40 项相关检查。前端请求缓存的 5 项 Node 检查通过。
 
 ## 回滚与待测范围
 

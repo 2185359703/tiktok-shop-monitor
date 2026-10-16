@@ -9,7 +9,7 @@ from sqlalchemy import and_, func, or_, select
 
 from app.models import Shop
 from app.models.analytics_read import AnalyticsRefreshRequest, EventReadModel as E, ProductReadModel as P
-from app.services.analytics_refresh import VERSION, key_for, now, scope
+from app.services.analytics_refresh import SCOPE_FIELDS, VERSION, key_for, now, scope
 
 
 def parameters(config, options=None, **extra):
@@ -89,9 +89,14 @@ def list_products(db, params, *, page=1, page_size=24, sort="recent"):
     # Match both directions of the recent index; a mixed-direction tie break
     # makes MySQL sort the entire catalog before returning the first page.
     tie_break = P.product_id.desc() if sort == "recent" else P.product_id.asc()
-    rows = db.execute(product_query(db, params).order_by(*order, tie_break)
+    query = product_query(db, params).with_only_columns(P.payload, Shop.canonical_name)
+    if sort == "recent" and not (set(params) - set(SCOPE_FIELDS)):
+        # Scope columns are correlated; MySQL can underestimate their combined
+        # selectivity and switch back to a catalog filesort on the second page.
+        query = query.with_hint(P, "FORCE INDEX (ix_read_products_recent)", dialect_name="mysql")
+    rows = db.execute(query.order_by(*order, tie_break)
                       .offset((page - 1) * page_size).limit(page_size + 1)).all()
-    return {"items": [{**row.payload, "shop_name": name} for row, name in rows[:page_size]],
+    return {"items": [{**payload, "shop_name": name} for payload, name in rows[:page_size]],
             "page": page, "page_size": page_size, "has_more": len(rows) > page_size,
             "total": None, "total_pages": None, "scope": params, "field_coverage": [], "image_readiness": True}
 
