@@ -103,8 +103,9 @@ def rows_for(db, params, basis, deadline, *, include_facts=True):
         columns = [P.product_id, P.shop_id, P.category, P.price_min, payload, Shop.canonical_name]
         if include_facts:
             columns.append(P.facts)
+        index = "ix_read_products_scope" if params.get("shop_id") else "PRIMARY"
         query = product_query(db, params, basis).with_only_columns(*columns).where(P.product_id > after).with_hint(
-            P, "FORCE INDEX (PRIMARY)", dialect_name="mysql")
+            P, f"FORCE INDEX ({index})", dialect_name="mysql")
         rows = db.execute(query.order_by(P.product_id).limit(batch_size)).all()
         for row in rows:
             yield row, {**row.payload, "shop_name": row.canonical_name}
