@@ -6,8 +6,7 @@ from collections import Counter, defaultdict
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 
-from sqlalchemy import Integer, func, literal_column, select
-from sqlalchemy.orm import undefer
+from sqlalchemy import Integer, func, literal_column, select, true
 
 from app.models import Product, Shop
 from app.models.analytics_read import AnalyticsRefreshRequest as Job, AnalyticsSnapshot as Snapshot, EventReadModel as E, ProductReadModel as P
@@ -79,18 +78,20 @@ def publish_snapshot(db, kind, params, revision, payload, snapshot_at):
 
 def rows_for(db, params, basis, deadline, *, include_facts=True):
     after = 0
+    batch_size = 512
     while True:
         if time.monotonic() > deadline:
             raise TimeoutError("analytics_build_budget")
-        query = product_query(db, params, basis).where(P.product_id > after)
+        columns = [P.product_id, P.shop_id, P.category, P.price_min, P.payload, Shop.canonical_name]
         if include_facts:
-            query = query.options(undefer(P.facts))
-        rows = db.execute(query.order_by(P.product_id).limit(128)).all()
-        for row, name in rows:
-            yield row, {**row.payload, "shop_name": name}
-        if len(rows) < 128:
+            columns.append(P.facts)
+        query = product_query(db, params, basis).with_only_columns(*columns).where(P.product_id > after)
+        rows = db.execute(query.order_by(P.product_id).limit(batch_size)).all()
+        for row in rows:
+            yield row, {**row.payload, "shop_name": row.canonical_name}
+        if len(rows) < batch_size:
             return
-        after = rows[-1][0].product_id
+        after = rows[-1].product_id
 
 
 def coverage_flags(data):
@@ -252,7 +253,7 @@ def build_overview(db, params, stamp, deadline):
         historical_detail_products=0, sku_count=0, sku_out_of_stock=0, known_stock_skus=0) for s in shops}
     prices, shop_prices, category_prices, category_counts = [], defaultdict(list), defaultdict(list), Counter()
     totals, kinds, stocks = Counter(), Counter(), Counter()
-    for row, data in rows_for(db, params, "latest_valid_snapshot", deadline):
+    for row, data in rows_for(db, params, "latest_valid_snapshot", deadline, include_facts=False):
         totals["products"] += 1
         totals["historical_detail_products"] += int(data["snapshot_id"] is not None)
         target = summaries[row.shop_id]
@@ -347,7 +348,8 @@ def build_snapshot(db, config, kind, params):
     if time.monotonic() > deadline:
         raise TimeoutError("analytics_build_budget")
     pending, oldest = db.execute(select(func.count(), func.min(Job.pending_since)).where(Job.schema_version == VERSION,
-        Job.kind.in_(("product_projection", "event_projection")), Job.requested_revision > Job.completed_revision)).one()
+        Job.is_pending == true(), Job.kind.in_(("product_projection", "event_projection")),
+        Job.requested_revision > Job.completed_revision)).one()
     payload["_source"] = {"source_pending_count": pending,
         "oldest_pending_age_seconds": max(0, int((stamp - oldest).total_seconds())) if oldest else 0}
     return json_value(payload), stamp

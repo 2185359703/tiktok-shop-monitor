@@ -1,6 +1,7 @@
 """Build one bounded projection from a consistent source transaction."""
 
-from collections import Counter
+from collections import Counter, defaultdict
+from dataclasses import dataclass
 from datetime import datetime
 from decimal import Decimal
 
@@ -36,6 +37,19 @@ def price_kind(low, high):
     return "unknown" if low is None else "starting_price" if high is None else "exact" if Decimal(str(low)) == Decimal(str(high)) else "range"
 
 
+@dataclass
+class ProductBatch:
+    products: dict
+    shops: dict
+    covers: dict
+    stamp: datetime
+    histories: dict
+    snapshots: dict
+    observations: dict
+    latest_states: dict
+    variants: dict
+
+
 def build_products(db, config, revisions):
     """Prefetch a small batch; all observations share the caller's source view."""
     if not revisions or len(revisions) > 8:
@@ -43,36 +57,76 @@ def build_products(db, config, revisions):
     products = {row.id: row for row in db.scalars(select(Product).options(undefer(Product.raw_attributes))
         .where(Product.id.in_(revisions), Product.platform == config.platform, Product.region == config.region))}
     shops = {row.id: row for row in db.scalars(select(Shop).where(Shop.id.in_({p.shop_id for p in products.values()})))}
-    prefetched = (products, shops, cover_images(db, list(products)), now(db))
+    stamp = now(db)
+    histories = {tuple(row[:3]): tuple(row[3:]) for row in db.execute(select(
+        ProductSnapshot.product_id, ProductSnapshot.currency, ProductSnapshot.pricing_context,
+        func.count(), func.count(func.distinct(ProductSnapshot.captured_at)),
+        func.min(ProductSnapshot.captured_at), func.max(ProductSnapshot.captured_at)).where(
+            ProductSnapshot.product_id.in_(products), ProductSnapshot.source_status == 200,
+            ProductSnapshot.captured_at <= stamp).group_by(
+                ProductSnapshot.product_id, ProductSnapshot.currency, ProductSnapshot.pricing_context))}
+    ranked = select(ProductSnapshot.id, func.row_number().over(partition_by=ProductSnapshot.product_id,
+        order_by=(ProductSnapshot.captured_at.desc(), ProductSnapshot.id.desc())).label("position")).where(
+            ProductSnapshot.product_id.in_(products), ProductSnapshot.source_status == 200,
+            ProductSnapshot.currency == config.currency, ProductSnapshot.pricing_context == config.pricing_context,
+            ProductSnapshot.captured_at <= stamp).subquery()
+    snapshots = {row.product_id: row for row in db.scalars(select(ProductSnapshot)
+        .join(ranked, ranked.c.id == ProductSnapshot.id).where(ranked.c.position == 1))}
+    snapshot_ids = [row.id for row in snapshots.values()]
+    observations = dict(db.execute(select(ProductSnapshot.id, ProductSnapshot.raw_payload["observation"])
+        .where(ProductSnapshot.id.in_(snapshot_ids))).all())
+    latest_states = defaultdict(list)
+    for snapshot_id, status, count in db.execute(select(VariantSnapshot.product_snapshot_id,
+        VariantSnapshot.stock_status, func.count()).where(VariantSnapshot.product_snapshot_id.in_(snapshot_ids))
+        .group_by(VariantSnapshot.product_snapshot_id, VariantSnapshot.stock_status)):
+        latest_states[snapshot_id].append((status, count))
+    variant_keys = [(product.id, product.currency, sku) for product in products.values()
+                    for sku in sorted(observed_identifiers(product))]
+    variants = defaultdict(list)
+    for offset in range(0, len(variant_keys), 500):
+        for row in db.execute(select(ProductVariant.product_id, ProductVariant.platform_variant_id,
+            ProductVariant.color, ProductVariant.size, ProductVariant.stock_status).where(tuple_(
+                ProductVariant.product_id, ProductVariant.currency, ProductVariant.platform_variant_id)
+                .in_(variant_keys[offset:offset + 500]))):
+            variants[row.product_id].append(tuple(row[1:]))
+    prefetched = ProductBatch(products, shops, cover_images(db, list(products)), stamp,
+                              histories, snapshots, observations, latest_states, variants)
     return [row for identifier, revision in revisions.items()
             for row in build_product(db, config, identifier, revision, _prefetched=prefetched)]
 
 
-def build_product(db, config, product_id, revision, *, _prefetched=None):
-    product = _prefetched[0].get(product_id) if _prefetched is not None else db.get(Product, product_id)
-    if product is None or product.platform != config.platform or product.region != config.region:
-        return []
-    shop = _prefetched[1][product.shop_id] if _prefetched is not None else db.get(Shop, product.shop_id)
-    stamp = _prefetched[3] if _prefetched is not None else now(db)
-    data = {name: json_value(getattr(product, name)) for name in FIELDS}
-    data.update(id=str(product.id), platform_product_id=product.platform_product_id, shop_id=str(product.shop_id),
-                shop_name=shop.canonical_name, category=product.normalized_category or product.original_category or "unknown",
-                detail_collected=product.last_success_at is not None, image_url=None, thumbnail_url=None, image_observed_at=None)
-    cover = (_prefetched[2] if _prefetched is not None else cover_images(db, [product.id])).get(product.id)
-    if cover:
-        data.update(json_value(cover))
-    # Only expand this product's observation membership, never a catalog join.
+def observed_identifiers(product):
     identifiers = (product.raw_attributes or {}).get("observed_sku_ids", [])
     identifiers = [identifiers] if isinstance(identifiers, str) else identifiers if isinstance(identifiers, list) else []
     identifiers = {value for value in identifiers if isinstance(value, str)}
     if len(identifiers) > 50000 or sum(len(value.encode()) for value in identifiers) > 8 * 1024 * 1024:
         raise ValueError("observed_sku_set_too_large")
+    return identifiers
+
+
+def build_product(db, config, product_id, revision, *, _prefetched=None):
+    product = _prefetched.products.get(product_id) if _prefetched is not None else db.get(Product, product_id)
+    if product is None or product.platform != config.platform or product.region != config.region:
+        return []
+    shop = _prefetched.shops[product.shop_id] if _prefetched is not None else db.get(Shop, product.shop_id)
+    stamp = _prefetched.stamp if _prefetched is not None else now(db)
+    data = {name: json_value(getattr(product, name)) for name in FIELDS}
+    data.update(id=str(product.id), platform_product_id=product.platform_product_id, shop_id=str(product.shop_id),
+                shop_name=shop.canonical_name, category=product.normalized_category or product.original_category or "unknown",
+                detail_collected=product.last_success_at is not None, image_url=None, thumbnail_url=None, image_observed_at=None)
+    cover = (_prefetched.covers if _prefetched is not None else cover_images(db, [product.id])).get(product.id)
+    if cover:
+        data.update(json_value(cover))
+    # Only expand this product's observation membership, never a catalog join.
+    identifiers = observed_identifiers(product)
     states, cells = Counter(), Counter()
     ordered = sorted(identifiers)
-    for offset in range(0, len(ordered), 500):
-        values = db.execute(select(ProductVariant.platform_variant_id, ProductVariant.color, ProductVariant.size,
+    chunks = ([_prefetched.variants[product.id]] if _prefetched is not None else (
+        db.execute(select(ProductVariant.platform_variant_id, ProductVariant.color, ProductVariant.size,
             ProductVariant.stock_status).where(ProductVariant.product_id == product.id,
                 ProductVariant.currency == product.currency, ProductVariant.platform_variant_id.in_(ordered[offset:offset + 500])))
+        for offset in range(0, len(ordered), 500)))
+    for values in chunks:
         for identifier, color, size, status in values:
             # MySQL comparisons may be case insensitive or ignore trailing spaces.
             if identifier not in identifiers:
@@ -89,28 +143,31 @@ def build_product(db, config, product_id, revision, *, _prefetched=None):
     current_history_scope = (ProductSnapshot.product_id == product.id, ProductSnapshot.source_status == 200,
         ProductSnapshot.currency == product.currency, ProductSnapshot.pricing_context == product.pricing_context,
         ProductSnapshot.captured_at <= stamp)
-    history = db.execute(select(func.count(), func.count(func.distinct(ProductSnapshot.captured_at)),
-        func.min(ProductSnapshot.captured_at), func.max(ProductSnapshot.captured_at)).where(*current_history_scope)).one()
+    history = (_prefetched.histories.get((product.id, product.currency, product.pricing_context), (0, 0, None, None))
+        if _prefetched is not None else db.execute(select(func.count(), func.count(func.distinct(ProductSnapshot.captured_at)),
+            func.min(ProductSnapshot.captured_at), func.max(ProductSnapshot.captured_at)).where(*current_history_scope)).one())
     facts = {"sku_states": dict(states), "sku_cells": [[c, s, status, n] for (c, s, status), n in sorted(cells.items())],
              "history_count": history[0], "history_observations": history[1],
              "history_first": json_value(history[2]), "history_last": json_value(history[3])}
     current = make_product_row(product, data, facts, "current", revision, stamp)
     current["category"] = (product.normalized_category or "").strip() or (product.original_category or "").strip() or "unknown"
-    snapshot = db.scalar(select(ProductSnapshot).where(*history_scope)
-        .order_by(ProductSnapshot.captured_at.desc(), ProductSnapshot.id.desc()).limit(1))
+    snapshot = (_prefetched.snapshots.get(product.id) if _prefetched is not None else db.scalar(select(ProductSnapshot).where(*history_scope)
+        .order_by(ProductSnapshot.captured_at.desc(), ProductSnapshot.id.desc()).limit(1)))
     record = {"id": str(product.id), "platform_product_id": product.platform_product_id, "shop_id": str(shop.id),
         "shop_name": shop.canonical_name, "platform_shop_id": shop.platform_shop_id, "product_url": product.product_url,
         "currency": config.currency, "pricing_context": config.pricing_context, "snapshot_id": str(snapshot.id) if snapshot else None}
     latest_states = Counter()
     visible = product.last_seen_at <= stamp
     if snapshot:
-        observation = db.scalar(select(ProductSnapshot.raw_payload["observation"]).where(ProductSnapshot.id == snapshot.id))
+        observation = (_prefetched.observations.get(snapshot.id) if _prefetched is not None else
+            db.scalar(select(ProductSnapshot.raw_payload["observation"]).where(ProductSnapshot.id == snapshot.id)))
         has_observation = isinstance(observation, dict) and bool(observation)
         for name in ("title", "original_category"):
             record[name] = observation.get(name) if has_observation else getattr(product, name) if visible else None
         record.update({name: json_value(getattr(snapshot, name)) for name in ("price_min", "price_max", "discount_rate", "stock_status")})
-        for status, count in db.execute(select(VariantSnapshot.stock_status, func.count()).where(
-            VariantSnapshot.product_snapshot_id == snapshot.id).group_by(VariantSnapshot.stock_status)):
+        for status, count in (_prefetched.latest_states[snapshot.id] if _prefetched is not None else
+            db.execute(select(VariantSnapshot.stock_status, func.count()).where(
+                VariantSnapshot.product_snapshot_id == snapshot.id).group_by(VariantSnapshot.stock_status))):
             latest_states[str(status)] = count
         record["observed_at"] = snapshot.captured_at.isoformat()
         conflicts = (observation.get("raw_attributes") or {}).get("attribute_conflicts") if has_observation else None

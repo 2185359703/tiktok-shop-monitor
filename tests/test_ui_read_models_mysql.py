@@ -44,14 +44,18 @@ def test_native_async_api_can_read_and_schedule_snapshots(mysql_engine, monkeypa
             db.execute(delete(AnalyticsRefreshRequest))
 
 
-def test_mysql_projection_and_snapshots_preserve_real_snapshot_fields(session):
+def test_mysql_projection_and_snapshots_preserve_real_snapshot_fields(session, monkeypatch):
+    from app.services import analytics_projection
     product, task = initial(session)
     page = snapshot()
     persist_product_detail(session, task, page)
     task.payload = {**task.payload, "pricing_context": "public_listed"}
     persist_snapshot(session, task, page, update_current=False)
     config = Settings()
+    stamp = now(session)
+    monkeypatch.setattr(analytics_projection, "now", lambda db: stamp)
     rows = build_product(session, config, product.id, 1)
+    assert analytics_projection.build_products(session, config, {product.id: 1}) == rows
     publish_product(session, config, rows)
     current = list_products(session, parameters(config))
     assert current["items"][0]["variant_count"] == 2
