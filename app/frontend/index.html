@@ -9,7 +9,9 @@
   <script>
     window.__shopScopeBootstrap = (() => {
       const controller = new AbortController(), timer = setTimeout(() => controller.abort(), 15000);
-      return fetch('./api/v2/ui/bootstrap', {cache:'no-store',signal:controller.signal})
+      const page = location.hash.slice(1).split('?')[0];
+      const initial = (!page || page === 'workbench') && !new URLSearchParams(location.search).get('shop_id');
+      return fetch('./api/v2/ui/bootstrap' + (initial ? '?initial=workbench' : ''), {cache:'no-store',signal:controller.signal})
         .then(response => response.ok ? response.json() : {bootstrapErrorStatus:response.status})
         .catch(() => ({bootstrapErrorStatus:0})).finally(() => clearTimeout(timer));
     })();

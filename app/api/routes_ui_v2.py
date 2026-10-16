@@ -54,13 +54,23 @@ async def snapshot_response(request, kind, options=None, **extra):
 
 
 @router.get("/ui/bootstrap")
-def bootstrap(request: Request):
+async def bootstrap(request: Request, initial: Literal["none", "workbench"] = "none"):
     available = False
     if enabled():
-        with source_reader(request.app.state.factory) as db:
-            available = ready(db, request.app.state.settings)
-    return {"schema_version": 2, "enabled": enabled(), "ready": available,
-            "pages": {key: available for key in ("products", "shops", "analytics", "events", "reports")}}
+        def read_ready():
+            with source_reader(request.app.state.factory) as db:
+                return ready(db, request.app.state.settings)
+        available = await app_call(request, read_ready)
+    result = {"schema_version": 2, "enabled": enabled(), "ready": available,
+              "pages": {key: available for key in ("products", "shops", "analytics", "events", "reports")}}
+    if available and initial == "workbench":
+        # Reuse the published generation while the browser downloads its JS.
+        # A missing snapshot stays pending; bootstrap never runs an aggregate.
+        response = await snapshot_response(request, "workbench", lookback_hours=24)
+        if response.status_code == 200:
+            import json
+            result["initial_workbench"] = json.loads(response.body)
+    return JSONResponse(result, headers={"Cache-Control": "no-store"})
 
 
 @router.get("/catalog/products")

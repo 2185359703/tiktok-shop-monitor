@@ -49,6 +49,30 @@ def test_list_has_no_aggregate_and_counts_only_observed_skus(analytics_db):
     assert list_products(analytics_db, parameters(Settings(), {"attribute": "color", "value": "Red"}))["items"]
 
 
+def test_bootstrap_can_preload_only_a_published_workbench(analytics_engine, monkeypatch):
+    from app.services import analytics_snapshot
+    config = Settings()
+    factory = sessionmaker(analytics_engine)
+    monkeypatch.setenv("ANALYTICS_ENABLED", "1")
+    with factory.begin() as db:
+        control = job_row(db, "control", {**scope(config), "name": "backfill"})
+        control.parameters = {**control.parameters, "ready": True}
+    app = FastAPI()
+    app.state.settings, app.state.factory = config, factory
+    app.include_router(router)
+    monkeypatch.setattr(analytics_snapshot, "build_current", lambda *args: pytest.fail("HTTP startup aggregated data"))
+    with TestClient(app) as client:
+        pending = client.get("/api/v2/ui/bootstrap?initial=workbench")
+        assert pending.status_code == 200 and pending.json()["ready"]
+        assert "initial_workbench" not in pending.json()
+        with factory.begin() as db:
+            publish_snapshot(db, "workbench", parameters(config, lookback_hours=24), 1,
+                             {"summary": {"products": 4}, "scope": parameters(config, lookback_hours=24)}, now(db))
+        result = client.get("/api/v2/ui/bootstrap?initial=workbench").json()
+        assert result["initial_workbench"]["summary"]["products"] == 4
+        assert "initial_workbench" not in client.get("/api/v2/ui/bootstrap").json()
+
+
 def test_recent_pages_break_equal_observation_times_without_duplicates(analytics_db):
     project(analytics_db)
     first = list_products(analytics_db, parameters(Settings()), page=1, page_size=2)

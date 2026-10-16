@@ -82,6 +82,8 @@ HTTPS 入口通过 `deployment/enable_ui_http2.py --project-root /opt/tiktok-sho
 
 同一次页面切换中的重绘合并到一个动画帧，避免缓存命中时重复创建工作台图表。仅修改前端时可使用 `deployment/publish_frontend.py`：它先确认全部应用容器对应当前后端版本，再逐文件比较新旧后端代码、配置、模板和迁移；存在后端差异会拒绝静态发布。通过后更新静态入口，并在活动发布记录中单独保存前端提交号。
 
+默认工作台启动时请求 `bootstrap?initial=workbench`，把已经发布的 24 小时工作台结果与脚本并行下载，并预填五个主题的缓存。存在店铺 URL 筛选、窗口不匹配或快照尚未生成时，继续使用正常的独立请求。bootstrap 不执行统计构建；过期缓存保留原时间并明确显示陈旧状态，后台重新获取最新版本。
+
 当前 4 GiB 服务器的 MySQL 容器上限为 1280 MiB，缓冲池为 512 MiB；此前 1 GiB 上限造成了持续内存回收。`deployment/tune_mysql_cache.py --project-root /opt/tiktok-shop-monitor --execute` 会验证项目归属、备份并更新 Compose 配置，再热调整容器上限，避免下次部署恢复旧值。该操作不重启 MySQL。
 
 以下测试使用内存数据库或专用本地 MySQL 测试库，不允许把业务库赋给 `MYSQL_TEST_URL`：

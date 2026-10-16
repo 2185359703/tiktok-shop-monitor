@@ -315,7 +315,7 @@ async function loadProducts(){
   }catch(e){if(!signal.aborted){state.productError=e;if(!state.productData?._loaded)state.productData=null;}}
   finally{if(!signal.aborted){state.productsLoading=false;if(state.page==='products')render();}}
 }
-function workbenchKey(filters=wbState.filters,hours=state.hours){return JSON.stringify([String(filters.shop_id||''),filters.category||'',(filters.q||'').trim(),(filters.currency||'USD').toUpperCase(),hours,state.uiV2?wbState.tab:'all']);}
+function workbenchKey(filters=wbState.filters,hours=state.hours,tab=wbState.tab){return JSON.stringify([String(filters.shop_id||''),filters.category||'',(filters.q||'').trim(),(filters.currency||'USD').toUpperCase(),hours,state.uiV2?tab:'all']);}
 function updateWorkbenchShopUrl(){const url=new URL(location.href);if(wbState.filters.shop_id)url.searchParams.set('shop_id',wbState.filters.shop_id);else url.searchParams.delete('shop_id');history.replaceState(null,'',url);}
 function selectWorkbenchShop(id){if(String(wbState.filters.shop_id||'')===String(id||''))return;clearTimeout(wbQueryTimer);wbState.filters.shop_id=String(id||'');updateWorkbenchShopUrl();loadWorkbench();}
 async function loadWorkbench({force=false}={}){
@@ -668,4 +668,13 @@ document.querySelectorAll('[data-icon]').forEach(el=>el.innerHTML=icon(el.datase
 installScatterInteractions({getData:()=>wbState.data,getShops:()=>[...allShops(),...(wbState.data?.shops||[])],onProduct:id=>openProduct(id)});
 installShopPicker({getShops:()=>state.shops.length?state.shops:wbState.data?.shops||[],getValue:()=>wbState.filters.shop_id,onChange:selectWorkbenchShop});
 navigate();
-(window.__shopScopeBootstrap||request('/api/v2/ui/bootstrap')).then(data=>{if(data.bootstrapErrorStatus!==undefined)throw {status:data.bootstrapErrorStatus};state.apiV2=data.schema_version===2;state.uiV2=Boolean(data.enabled);}).catch(error=>{state.apiV2=error.status!==404;state.uiV2=error.status!==404;}).finally(()=>{state.initializing=false;refresh({force:false});});
+(window.__shopScopeBootstrap||request('/api/v2/ui/bootstrap')).then(data=>{
+  if(data.bootstrapErrorStatus!==undefined)throw {status:data.bootstrapErrorStatus};
+  state.apiV2=data.schema_version===2;state.uiV2=Boolean(data.enabled);
+  const initial=data.initial_workbench,filters=wbState.filters;
+  if(state.uiV2&&initial?.summary&&!filters.shop_id&&!filters.category&&!filters.q&&
+    (filters.currency||'USD').toUpperCase()===initial.scope?.currency&&state.hours===initial.scope?.lookback_hours){
+    for(const tab of ['market','attributes','stock','competition','quality'])
+      workbenchCache.set(workbenchKey(filters,state.hours,tab),{data:structuredClone(initial),savedAt:Date.now()});
+  }
+}).catch(error=>{state.apiV2=error.status!==404;state.uiV2=error.status!==404;}).finally(()=>{state.initializing=false;refresh({force:false});});

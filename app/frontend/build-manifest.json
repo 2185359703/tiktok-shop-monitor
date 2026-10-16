@@ -2,8 +2,8 @@
   "esbuild": "0.25.12",
   "sha256": {
     "app/frontend/api.js": "67f9420e855b4e5233757bf53278f673a861a9ff288968899b6ea430248ecb7e",
-    "app/frontend/app.bundle.js": "334ff1fa6f4051741ca7fa0633ff655fb3bf9d672e98b88400beef32180254f0",
-    "app/frontend/app.js": "41cf5d79e22c8cb9044a8a20c67cbc8bc57b5b9f1ca60d9de08ca313c8d98850",
+    "app/frontend/app.bundle.js": "e469b992b7fc67751e3d992a6192b219e63e341ad99170706954429180d59df4",
+    "app/frontend/app.js": "89a4c3191816441f06cb2693ab02aa378c2e9c4a5b697dc705052dd08d483b2b",
     "app/frontend/charts.js": "9347c0d892ea10996abf74737f942d22be3a352179e57d1ccc2d7e39021051f5",
     "app/frontend/comparison.js": "e0cacbeb4e57abba5fb8549521d6c87e0803f9ff2c9500412776ac3a0b0cf5e6",
     "app/frontend/matching-ui.js": "643ea3b89dad864bd0d3973ecd9546b5f981d27fa7c19b2b0caa4cd5bf85197d",
