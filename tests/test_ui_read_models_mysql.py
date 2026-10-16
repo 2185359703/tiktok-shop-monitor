@@ -106,6 +106,12 @@ def test_native_async_worker_publishes_without_sync_driver_io(mysql_engine, monk
     async def check():
         database = AsyncDatabase(make_async_engine(config.database_url))
         try:
+            for identifier in (90001, 90002):
+                await database.transaction(enqueue, "product_projection", {"product_id": str(identifier)})
+            assert await AsyncAnalyticsRunner(database, config).run_once()
+            completed = await database.read(lambda db: db.scalars(select(AnalyticsRefreshRequest.completed_revision)
+                .where(AnalyticsRefreshRequest.kind == "product_projection")).all())
+            assert completed == [1, 1]
             await database.transaction(enqueue, "catalog_stats", params)
             assert await AsyncAnalyticsRunner(database, config).run_once()
             value = await database.read(lambda db: db.get(AnalyticsSnapshot, (2, key_for("catalog_stats", params))).payload)

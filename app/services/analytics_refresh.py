@@ -9,7 +9,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from uuid import uuid4
 
-from sqlalchemy import event, func, or_, select, true
+from sqlalchemy import event, func, or_, select, true, tuple_
 from sqlalchemy.orm import Session
 
 from app.models.analytics_read import AnalyticsRefreshRequest as Job, AnalyticsSnapshot
@@ -204,10 +204,17 @@ class RefreshLease:
 
 
 def claim(db, config, *, prefer_statistics=False, slot_name="analysis_slot"):
+    leases = claim_batch(db, config, prefer_statistics=prefer_statistics, slot_name=slot_name, batch_size=1)
+    return leases[0] if leases else None
+
+
+def claim_batch(db, config, *, prefer_statistics=False, slot_name="analysis_slot", batch_size=8):
+    if not 1 <= batch_size <= 8:
+        raise ValueError("analytics_batch_size")
     slot = job_row(db, "control", {**scope(config), "name": slot_name})
     stamp = now(db)
     if slot.lease_until and slot.lease_until > stamp:
-        return None
+        return ()
     row = None
     for statistics in (prefer_statistics, not prefer_statistics):
         query = select(Job).where(Job.schema_version == VERSION, Job.is_pending == true(),
@@ -222,48 +229,86 @@ def claim(db, config, *, prefer_statistics=False, slot_name="analysis_slot"):
         if row is not None:
             break
     if row is None:
-        return None
+        return ()
+    rows = [row]
+    # Failed items retry alone so one malformed source cannot block its peers.
+    # Statistics and events retain their individual publication/sequence rules.
+    if row.kind == "product_projection" and not row.attempts and batch_size > 1:
+        rows.extend(db.scalars(query.where(Job.kind == "product_projection", Job.attempts == 0,
+            Job.key_hash != row.key_hash).with_hint(Job, "FORCE INDEX (ix_analytics_pending)", dialect_name="mysql")
+            .order_by(Job.available_at, Job.key_hash).limit(batch_size - 1).with_for_update(skip_locked=True)).all())
     token = str(uuid4())
-    for item in (slot, row):
+    for item in (slot, *rows):
         item.lease_token, item.lease_until = token, stamp + timedelta(seconds=LEASE_SECONDS)
-    row.claimed_revision = row.requested_revision
+    for item in rows:
+        item.claimed_revision = item.requested_revision
     db.flush()
-    return RefreshLease(row.kind, row.key_hash, dict(row.parameters), row.claimed_revision, token, slot.key_hash)
+    return tuple(RefreshLease(item.kind, item.key_hash, dict(item.parameters), item.claimed_revision, token, slot.key_hash)
+                 for item in rows)
 
 
 def fenced_rows(db, lease):
+    slot, rows = fenced_batch(db, (lease,))
+    return slot, rows[0]
+
+
+def fenced_batch(db, leases):
+    lease = leases[0]
+    if any(item.token != lease.token or item.slot_key != lease.slot_key for item in leases):
+        raise LeaseLost("analytics_batch_owner_mismatch")
     stamp = now(db)
     slot = db.scalar(select(Job).where(Job.schema_version == VERSION, Job.kind == "control",
                                       Job.key_hash == lease.slot_key).with_for_update())
-    row = db.scalar(select(Job).where(Job.schema_version == VERSION, Job.kind == lease.kind,
-                                     Job.key_hash == lease.key).with_for_update())
+    found = db.scalars(select(Job).where(Job.schema_version == VERSION,
+        tuple_(Job.kind, Job.key_hash).in_([(item.kind, item.key) for item in leases]))
+        .order_by(Job.kind, Job.key_hash).with_for_update().execution_options(populate_existing=True)).all()
+    by_key = {(row.kind, row.key_hash): row for row in found}
+    rows = [by_key.get((item.kind, item.key)) for item in leases]
     if any(item is None or item.lease_token != lease.token or item.lease_until is None or
-           item.lease_until <= stamp for item in (slot, row)):
+           item.lease_until <= stamp for item in (slot, *rows)):
         raise LeaseLost("analytics_lease_lost")
-    return slot, row
+    return slot, rows
 
 
 def heartbeat(db, lease):
-    for item in fenced_rows(db, lease):
-        item.lease_until = now(db) + timedelta(seconds=LEASE_SECONDS)
+    heartbeat_batch(db, (lease,))
+
+
+def heartbeat_batch(db, leases):
+    slot, rows = fenced_batch(db, leases)
+    until = now(db) + timedelta(seconds=LEASE_SECONDS)
+    for item in (slot, *rows):
+        item.lease_until = until
 
 
 def complete(db, lease, publish):
-    slot, row = fenced_rows(db, lease)
+    complete_batch(db, (lease,), publish)
+
+
+def complete_batch(db, leases, publish):
+    slot, rows = fenced_batch(db, leases)
     publish(db)
-    row.completed_revision = lease.revision
-    row.is_pending = row.requested_revision > lease.revision
-    row.pending_since = None if row.requested_revision == lease.revision else row.pending_since
-    row.available_at = now(db)
-    row.attempts, row.last_error_code = 0, None
-    for item in (row, slot):
+    stamp = now(db)
+    for lease, row in zip(leases, rows):
+        row.completed_revision = lease.revision
+        row.is_pending = row.requested_revision > lease.revision
+        row.pending_since = None if row.requested_revision == lease.revision else row.pending_since
+        row.available_at = stamp
+        row.attempts, row.last_error_code = 0, None
+    for item in (slot, *rows):
         item.lease_token = item.lease_until = None
 
 
 def failed(db, lease, error):
-    slot, row = fenced_rows(db, lease)
-    row.attempts += 1
-    row.last_error_code = type(error).__name__[:80]
-    row.available_at = now(db) + timedelta(seconds=min(300, 5 * 2 ** min(row.attempts, 6)))
-    for item in (row, slot):
+    failed_batch(db, (lease,), error)
+
+
+def failed_batch(db, leases, error):
+    slot, rows = fenced_batch(db, leases)
+    stamp = now(db)
+    for row in rows:
+        row.attempts += 1
+        row.last_error_code = type(error).__name__[:80]
+        row.available_at = stamp + timedelta(seconds=min(300, 5 * 2 ** min(row.attempts, 6)))
+    for item in (slot, *rows):
         item.lease_token = item.lease_until = None

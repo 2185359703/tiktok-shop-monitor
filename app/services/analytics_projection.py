@@ -4,7 +4,7 @@ from collections import Counter
 from datetime import datetime
 from decimal import Decimal
 
-from sqlalchemy import func, select
+from sqlalchemy import func, select, tuple_
 from sqlalchemy.orm import undefer
 
 from app.models import ChangeEvent, Product, ProductImage, ProductSnapshot, ProductVariant, Shop, VariantSnapshot
@@ -36,17 +36,29 @@ def price_kind(low, high):
     return "unknown" if low is None else "starting_price" if high is None else "exact" if Decimal(str(low)) == Decimal(str(high)) else "range"
 
 
-def build_product(db, config, product_id, revision):
-    product = db.get(Product, product_id)
+def build_products(db, config, revisions):
+    """Prefetch a small batch; all observations share the caller's source view."""
+    if not revisions or len(revisions) > 8:
+        raise ValueError("analytics_product_batch_size")
+    products = {row.id: row for row in db.scalars(select(Product).options(undefer(Product.raw_attributes))
+        .where(Product.id.in_(revisions), Product.platform == config.platform, Product.region == config.region))}
+    shops = {row.id: row for row in db.scalars(select(Shop).where(Shop.id.in_({p.shop_id for p in products.values()})))}
+    prefetched = (products, shops, cover_images(db, list(products)), now(db))
+    return [row for identifier, revision in revisions.items()
+            for row in build_product(db, config, identifier, revision, _prefetched=prefetched)]
+
+
+def build_product(db, config, product_id, revision, *, _prefetched=None):
+    product = _prefetched[0].get(product_id) if _prefetched is not None else db.get(Product, product_id)
     if product is None or product.platform != config.platform or product.region != config.region:
         return []
-    shop = db.get(Shop, product.shop_id)
-    stamp = now(db)
+    shop = _prefetched[1][product.shop_id] if _prefetched is not None else db.get(Shop, product.shop_id)
+    stamp = _prefetched[3] if _prefetched is not None else now(db)
     data = {name: json_value(getattr(product, name)) for name in FIELDS}
     data.update(id=str(product.id), platform_product_id=product.platform_product_id, shop_id=str(product.shop_id),
                 shop_name=shop.canonical_name, category=product.normalized_category or product.original_category or "unknown",
                 detail_collected=product.last_success_at is not None, image_url=None, thumbnail_url=None, image_observed_at=None)
-    cover = cover_images(db, [product.id]).get(product.id)
+    cover = (_prefetched[2] if _prefetched is not None else cover_images(db, [product.id])).get(product.id)
     if cover:
         data.update(json_value(cover))
     # Only expand this product's observation membership, never a catalog join.
@@ -132,9 +144,11 @@ def make_product_row(product, data, facts, basis, revision, stamp, *, eligible=T
 
 
 def publish_product(db, config, rows):
+    existing = {(row.basis, row.product_id): row for row in db.scalars(select(ProductReadModel).where(
+        ProductReadModel.schema_version == VERSION, tuple_(ProductReadModel.basis, ProductReadModel.product_id)
+        .in_([(value["basis"], value["product_id"]) for value in rows])))} if rows else {}
     for values in rows:
-        key = (VERSION, values["basis"], values["product_id"])
-        previous = db.get(ProductReadModel, key)
+        previous = existing.get((values["basis"], values["product_id"]))
         if previous is not None and previous.applied_revision > values["applied_revision"]:
             continue
         if previous is None:

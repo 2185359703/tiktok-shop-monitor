@@ -4,8 +4,8 @@ import asyncio
 import logging
 
 from app.services.analytics_runtime import source_reader
-from app.services.analytics_projection import build_event, build_product, publish_event, publish_product
-from app.services.analytics_refresh import LeaseLost, claim, complete, failed, heartbeat
+from app.services.analytics_projection import build_event, build_products, publish_event, publish_product
+from app.services.analytics_refresh import LeaseLost, claim_batch, complete_batch, failed_batch, heartbeat_batch
 from app.services.analytics_snapshot import build_snapshot, publish_snapshot
 from app.services.analytics_refresh import STAT_KINDS
 from app.services.async_heavy_slot import heavy_slot
@@ -15,15 +15,16 @@ class AsyncAnalyticsRunner:
     def __init__(self, database, config):
         self.database, self.config, self.steps = database, config, 0
 
-    async def renew(self, lease):
+    async def renew(self, leases):
         while True:
             await asyncio.sleep(10)
-            await self.database.transaction(heartbeat, lease)
+            await self.database.transaction(heartbeat_batch, leases)
 
-    def build(self, lease):
+    def build(self, leases):
+        lease = leases[0]
         with source_reader(self.database.sync_factory) as db:
             if lease.kind == "product_projection":
-                data = build_product(db, self.config, int(lease.parameters["product_id"]), lease.revision)
+                data = build_products(db, self.config, {int(item.parameters["product_id"]): item.revision for item in leases})
                 return lambda session: publish_product(session, self.config, data)
             if lease.kind == "event_projection":
                 data = build_event(db, self.config, int(lease.parameters["event_id"]))
@@ -35,16 +36,17 @@ class AsyncAnalyticsRunner:
         prefer_statistics = self.steps % 8 == 7
         slot_name = f"analysis_slot:{self.steps % self.config.analytics_concurrency}"
         self.steps += 1
-        lease = await self.database.transaction(claim, self.config, prefer_statistics=prefer_statistics, slot_name=slot_name)
-        if lease is None:
+        leases = await self.database.transaction(claim_batch, self.config, prefer_statistics=prefer_statistics, slot_name=slot_name)
+        if not leases:
             return False
+        lease = leases[0]
         async def prepare():
             if lease.kind in STAT_KINDS:
                 async with heavy_slot(self.database, self.config):
-                    return await self.database.call(self.build, lease)
-            return await self.database.call(self.build, lease)
+                    return await self.database.call(self.build, leases)
+            return await self.database.call(self.build, leases)
         preparation = asyncio.create_task(prepare())
-        renewal = asyncio.create_task(self.renew(lease))
+        renewal = asyncio.create_task(self.renew(leases))
         try:
             done, _ = await asyncio.wait({preparation, renewal}, return_when=asyncio.FIRST_COMPLETED)
             if renewal in done:
@@ -52,11 +54,11 @@ class AsyncAnalyticsRunner:
             publish = await preparation
             renewal.cancel()
             await asyncio.gather(renewal, return_exceptions=True)
-            await self.database.transaction(complete, lease, publish)
+            await self.database.transaction(complete_batch, leases, publish)
         except Exception as error:
             logging.getLogger(__name__).warning("analytics_refresh_failed", extra={"kind": lease.kind, "error_type": type(error).__name__})
             try:
-                await self.database.transaction(failed, lease, error)
+                await self.database.transaction(failed_batch, leases, error)
             except LeaseLost:
                 pass
         finally:

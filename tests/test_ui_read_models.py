@@ -9,9 +9,9 @@ from sqlalchemy.orm import sessionmaker
 from app.api.routes_ui_v2 import router
 from app.models import Product
 from app.models.analytics_read import AnalyticsRefreshRequest as Job, AnalyticsSnapshot, EventReadModel, ProductReadModel
-from app.services.analytics_projection import build_event, build_product, publish_event, publish_product
+from app.services.analytics_projection import build_event, build_product, build_products, publish_event, publish_product
 from app.services.analytics_queries import list_events, list_products, parameters
-from app.services.analytics_refresh import VERSION, LeaseLost, claim, complete, enqueue, job_row, mark_products, now, scope
+from app.services.analytics_refresh import VERSION, LeaseLost, claim, claim_batch, complete, complete_batch, enqueue, failed_batch, job_row, mark_products, now, scope
 from app.services.analytics_runtime import AnalyticsRunner, backfill_batch
 from app.services.analytics_service import build_workbench
 from app.services.analytics_snapshot import build_current, build_overview, publish_snapshot, read_snapshot
@@ -96,6 +96,57 @@ def test_changes_arriving_during_refresh_remain_pending_and_old_lease_cannot_pub
     assert row.completed_revision == 1 and row.requested_revision == 2
     with pytest.raises(LeaseLost):
         complete(analytics_db, lease, lambda db: pytest.fail("stale owner published"))
+
+
+def test_batched_products_preserve_both_bases_with_fewer_queries(analytics_db, monkeypatch):
+    from app.services import analytics_projection
+    monkeypatch.setattr(analytics_projection, "now", lambda db: NOW)
+    statements = []
+    def capture(conn, cursor, statement, *args):
+        statements.append(statement)
+    engine = analytics_db.get_bind()
+    event.listen(engine, "before_cursor_execute", capture)
+    try:
+        analytics_db.expunge_all()
+        expected = [row for identifier in range(1, 9)
+                    for row in build_product(analytics_db, Settings(), identifier, 3)]
+        individual_count = len(statements)
+        statements.clear()
+        analytics_db.expunge_all()
+        actual = build_products(analytics_db, Settings(), dict.fromkeys(range(1, 9), 3))
+        assert actual == expected
+        assert len(statements) < individual_count - 10
+    finally:
+        event.remove(engine, "before_cursor_execute", capture)
+
+
+def test_batch_publication_preserves_new_revisions_and_fences_every_member(analytics_db):
+    for identifier in (1, 2):
+        enqueue(analytics_db, "product_projection", {"product_id": str(identifier)})
+    leases = claim_batch(analytics_db, Settings())
+    assert len(leases) == 2
+    enqueue(analytics_db, leases[0].kind, leases[0].parameters, force=True)
+    complete_batch(analytics_db, leases, lambda db: publish_product(db, Settings(), build_products(
+        db, Settings(), {int(item.parameters["product_id"]): item.revision for item in leases})))
+    changed = analytics_db.get(Job, (VERSION, leases[0].kind, leases[0].key))
+    assert changed.is_pending and changed.requested_revision == 2 and changed.completed_revision == 1
+    next_leases = claim_batch(analytics_db, Settings())
+    assert len(next_leases) == 1
+    with pytest.raises(LeaseLost):
+        complete_batch(analytics_db, leases, lambda db: pytest.fail("partially stale batch published"))
+
+
+def test_failed_batch_retries_members_individually(analytics_db):
+    for identifier in range(1, 11):
+        enqueue(analytics_db, "product_projection", {"product_id": str(identifier)})
+    leases = claim_batch(analytics_db, Settings())
+    assert len(leases) == 8
+    failed_batch(analytics_db, leases, ValueError("invalid source"))
+    for lease in leases:
+        analytics_db.get(Job, (VERSION, lease.kind, lease.key)).available_at = NOW - timedelta(days=1)
+    analytics_db.flush()
+    retry = claim_batch(analytics_db, Settings())
+    assert len(retry) == 1
 
 
 def test_transactional_dirty_mark_rolls_back_with_price_write(analytics_db):
