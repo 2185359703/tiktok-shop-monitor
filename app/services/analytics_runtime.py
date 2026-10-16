@@ -11,7 +11,7 @@ from sqlalchemy.orm import Session
 from app.models import ChangeEvent, Product
 from app.models.analytics_read import ANALYTICS_TABLE_NAMES, AnalyticsRefreshRequest as Job, AnalyticsSnapshot, EventReadModel, ProductReadModel
 from app.services.analytics_projection import build_event, build_product, publish_event, publish_product
-from app.services.analytics_refresh import VERSION, STAT_KINDS, LeaseLost, claim, complete, enqueue, failed, heartbeat, heavy_slot, job_row, key_for, now, scope
+from app.services.analytics_refresh import VERSION, STAT_KINDS, LeaseLost, claim, complete, enqueue, enqueue_many, failed, heartbeat, heavy_slot, job_row, key_for, now, scope
 from app.services.analytics_snapshot import build_snapshot, publish_snapshot
 
 
@@ -44,8 +44,7 @@ def backfill_batch(db, config, *, batch_size=64):
             continue
         identifiers = db.scalars(query.where(model.id > state[name + "_after"], model.id <= state[name + "_upper"])
                                  .order_by(model.id).limit(batch_size)).all()
-        for identifier in identifiers:
-            enqueue(db, name + "_projection", {key: str(identifier)})
+        enqueue_many(db, name + "_projection", [{key: str(identifier)} for identifier in identifiers])
         if identifiers:
             state[name + "_after"] = identifiers[-1]
         state[name + "_scan_done"] = len(identifiers) < batch_size
@@ -60,10 +59,8 @@ def backfill_batch(db, config, *, batch_size=64):
             ProductReadModel.product_id == Product.id))).limit(batch_size)).all())
     missing_events = db.scalars(events.where(~exists(select(EventReadModel.event_id).where(
         EventReadModel.schema_version == VERSION, EventReadModel.event_id == ChangeEvent.id))).limit(batch_size)).all()
-    for identifier in set(missing):
-        enqueue(db, "product_projection", {"product_id": str(identifier)})
-    for identifier in missing_events:
-        enqueue(db, "event_projection", {"event_id": str(identifier)})
+    enqueue_many(db, "product_projection", [{"product_id": str(identifier)} for identifier in set(missing)])
+    enqueue_many(db, "event_projection", [{"event_id": str(identifier)} for identifier in missing_events])
     pending = db.scalar(select(func.count()).select_from(Job).where(Job.schema_version == VERSION,
         Job.kind.in_(("product_projection", "event_projection")), Job.is_pending == true(),
         Job.requested_revision > Job.completed_revision))

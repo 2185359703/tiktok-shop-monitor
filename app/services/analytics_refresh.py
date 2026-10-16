@@ -9,7 +9,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from uuid import uuid4
 
-from sqlalchemy import event, func, or_, select, true, tuple_
+from sqlalchemy import case, event, func, or_, select, true, tuple_
 from sqlalchemy.orm import Session
 
 from app.models.analytics_read import AnalyticsRefreshRequest as Job, AnalyticsSnapshot
@@ -72,6 +72,32 @@ def enqueue(db, kind, parameters, *, force=False, available_at=None):
     row.last_requested_at = stamp
     db.flush()
     return row
+
+
+def enqueue_many(db, kind, parameters):
+    """Coalesce a bounded backfill page without per-product lock round trips."""
+    keyed = {key_for(kind, params): params for params in parameters}
+    if not keyed:
+        return
+    if len(keyed) > 512:
+        raise ValueError("analytics_enqueue_batch_size")
+    stamp = now(db)
+    values = [dict(schema_version=VERSION, kind=kind, key_hash=key, parameters=params,
+        requested_revision=1, completed_revision=0, claimed_revision=0, is_pending=True, pending_since=stamp,
+        available_at=stamp, last_requested_at=stamp, attempts=0) for key, params in sorted(keyed.items())]
+    pending = Job.requested_revision > Job.completed_revision
+    # MySQL evaluates assignments left-to-right; revision must be updated last.
+    updates = [("pending_since", case((pending, Job.pending_since), else_=stamp)),
+        ("available_at", case((pending, Job.available_at), else_=stamp)), ("is_pending", True),
+        ("last_requested_at", stamp),
+        ("requested_revision", case((pending, Job.requested_revision), else_=Job.requested_revision + 1))]
+    if db.bind.dialect.name == "mysql":
+        from sqlalchemy.dialects.mysql import insert
+        db.execute(insert(Job).values(values).on_duplicate_key_update(updates))
+    else:
+        from sqlalchemy.dialects.sqlite import insert
+        db.execute(insert(Job).values(values).on_conflict_do_update(
+            index_elements=[Job.schema_version, Job.kind, Job.key_hash], set_=dict(updates)))
 
 
 def mark_products(db, product_ids):

@@ -153,3 +153,27 @@ def test_empty_statistics_invalidation_does_not_lock_new_projection_requests(mys
     finally:
         with factory.begin() as db:
             db.execute(delete(AnalyticsRefreshRequest))
+
+
+def test_bulk_backfill_coalesces_pending_jobs_without_losing_revisions_or_retry_times(session):
+    from app.models.analytics_read import AnalyticsRefreshRequest as Job
+    from app.services.analytics_refresh import enqueue_many, key_for
+    kind = "product_projection"
+    first, second, third = [{"product_id": str(identifier)} for identifier in (100, 101, 102)]
+    finished = enqueue(session, kind, first)
+    finished.completed_revision = 1
+    finished.is_pending = False
+    finished.pending_since = None
+    pending = enqueue(session, kind, second, force=True)
+    pending.requested_revision = 7
+    pending.completed_revision = 4
+    pending.lease_token = "00000000-0000-0000-0000-000000000001"
+    retry_time = pending.available_at = now(session) + timedelta(minutes=2)
+    session.flush()
+    enqueue_many(session, kind, [first, second, third, first])
+    session.expire_all()
+    assert finished.requested_revision == 2 and finished.completed_revision == 1 and finished.is_pending
+    assert finished.pending_since is not None
+    assert pending.requested_revision == 7 and pending.completed_revision == 4 and pending.available_at == retry_time
+    assert pending.lease_token == "00000000-0000-0000-0000-000000000001"
+    assert session.get(Job, (2, kind, key_for(kind, third))).requested_revision == 1
