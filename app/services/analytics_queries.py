@@ -80,7 +80,7 @@ def list_products(db, params, *, page=1, page_size=24, sort="recent"):
     if sort not in sorts or page < 1 or not 1 <= page_size <= 100:
         raise ValueError("invalid_pagination")
     order = sorts[sort]
-    if sort.startswith("price_"):
+    if sort == "price_asc":
         order = (P.price_min.is_(None), *order)
     if sort.startswith("stock_"):
         order = (P.stock_status == "unknown", *order)
@@ -88,12 +88,13 @@ def list_products(db, params, *, page=1, page_size=24, sort="recent"):
         order = (P.sku_count.is_(None), *order)
     # Match both directions of the recent index; a mixed-direction tie break
     # makes MySQL sort the entire catalog before returning the first page.
-    tie_break = P.product_id.desc() if sort == "recent" else P.product_id.asc()
+    tie_break = P.product_id.desc() if sort in {"recent", "title_desc", "price_desc"} else P.product_id.asc()
     query = product_query(db, params).with_only_columns(P.product_id.label("page_product_id"))
     if not (set(params) - set(SCOPE_FIELDS)):
         # Scope columns are correlated; MySQL can underestimate their combined
         # selectivity and switch back to a catalog filesort on the second page.
-        index = "ix_read_products_recent" if sort == "recent" else "ix_read_products_catalog"
+        index = {"recent": "ix_read_products_recent", "title": "ix_read_products_title",
+                 "title_desc": "ix_read_products_title", "price_desc": "ix_read_products_price"}.get(sort, "ix_read_products_catalog")
         query = query.with_hint(P, f"FORCE INDEX ({index})", dialect_name="mysql")
     identifiers = db.scalars(query.order_by(*order, tie_break)
         .offset((page - 1) * page_size).limit(page_size + 1)).all()

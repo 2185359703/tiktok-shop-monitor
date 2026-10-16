@@ -57,6 +57,15 @@ def test_recent_pages_break_equal_observation_times_without_duplicates(analytics
     assert [item["id"] for item in second["items"]] == ["2", "1"]
 
 
+@pytest.mark.parametrize("sort,expected", [("price_asc", ["1", "2", "3", "4"]), ("price_desc", ["3", "2", "1", "4"])])
+def test_price_pages_preserve_unknown_prices_at_the_end(analytics_db, sort, expected):
+    project(analytics_db)
+    rows = [item for page in (1, 2) for item in list_products(
+        analytics_db, parameters(Settings()), sort=sort, page=page, page_size=2)["items"]]
+    assert [item["id"] for item in rows] == expected
+    assert rows[-1]["price_min"] is None
+
+
 def test_projection_statistics_preserve_existing_workbench_numbers(analytics_db):
     import time
     project(analytics_db)

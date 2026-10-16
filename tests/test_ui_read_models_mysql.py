@@ -194,8 +194,8 @@ def test_ui_access_indexes_migrate_once_without_changing_columns(mysql_engine):
     with mysql_engine.connect() as connection:
         for index in INDEXES:
             connection.exec_driver_sql(f"ALTER TABLE `{index.table.name}` DROP INDEX `{index.name}`")
-    assert migrate(mysql_engine)["pending_statements"] == 3
+    assert migrate(mysql_engine)["pending_statements"] == 4
     result = migrate(mysql_engine, execute=True)
-    assert result == {"ready": True, "executed_statements": 3, "pending_statements": 0, "data_rows_modified": 0}
+    assert result == {"ready": True, "executed_statements": 4, "pending_statements": 0, "data_rows_modified": 0}
     assert columns() == before
     assert migrate(mysql_engine, execute=True)["executed_statements"] == 0

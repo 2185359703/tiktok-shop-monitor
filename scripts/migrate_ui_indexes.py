@@ -13,7 +13,7 @@ from app.storage.schema import require_supported_server
 
 INDEXES = tuple(next(index for index in model.__table__.indexes if index.name == name) for model, name in (
     (ProductReadModel, "ix_read_products_catalog"), (Product, "ix_products_recent_detail"),
-    (CrawlTask, "ix_crawl_tasks_summary")))
+    (CrawlTask, "ix_crawl_tasks_summary"), (ProductReadModel, "ix_read_products_title")))
 LOCK_NAME = "tiktok_ui_read_indexes"
 
 

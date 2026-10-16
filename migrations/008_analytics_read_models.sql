@@ -96,3 +96,5 @@ CREATE INDEX ix_read_products_price ON product_read_models (platform, region, ba
 CREATE INDEX ix_read_products_recent ON product_read_models (platform, region, basis, observed_at, product_id);
 
 CREATE INDEX ix_read_products_shop ON product_read_models (platform, region, basis, shop_id, product_id);
+
+CREATE INDEX ix_read_products_title ON product_read_models (platform, region, basis, title, product_id);

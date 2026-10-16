@@ -149,6 +149,8 @@ CREATE INDEX ix_read_products_recent ON product_read_models (platform, region, b
 
 CREATE INDEX ix_read_products_shop ON product_read_models (platform, region, basis, shop_id, product_id);
 
+CREATE INDEX ix_read_products_title ON product_read_models (platform, region, basis, title, product_id);
+
 CREATE TABLE IF NOT EXISTS seed_shop_observations (
 	category VARCHAR(64) NOT NULL COMMENT '观察到店铺的服装类目代码',
 	seed_type VARCHAR(32) NOT NULL COMMENT '种子类型：shop_name=店名，shop_url=店铺链接，shop_id=平台店铺ID' DEFAULT 'shop_name',

@@ -36,7 +36,7 @@
 .\.venv\Scripts\python.exe -m scripts.migrate_analytics --execute
 ```
 
-008 迁移创建 `product_read_models`、`event_read_models`、`analytics_refresh_requests` 和 `analytics_snapshots`，不 ALTER 原业务表。随后执行 `python -m scripts.migrate_ui_indexes --execute`，为投影分页、最近详情和任务/报告查询补充三个覆盖索引。009 使用在线索引 DDL，不修改列和业务行；重复执行会跳过已有索引。对应 SQL 为 [008_analytics_read_models.sql](../migrations/008_analytics_read_models.sql) 和 [009_ui_read_indexes.sql](../migrations/009_ui_read_indexes.sql)。完整模式快照已同步注册模型。
+008 迁移创建 `product_read_models`、`event_read_models`、`analytics_refresh_requests` 和 `analytics_snapshots`，不 ALTER 原业务表。随后执行 `python -m scripts.migrate_ui_indexes --execute`，为投影分页、标题排序、最近详情和任务/报告查询补充四个索引。009 使用在线索引 DDL，不修改列和业务行；重复执行会跳过已有索引。对应 SQL 为 [008_analytics_read_models.sql](../migrations/008_analytics_read_models.sql) 和 [009_ui_read_indexes.sql](../migrations/009_ui_read_indexes.sql)。完整模式快照已同步注册模型。
 
 若检查发现原有功能的表结构差异，先完成对应版本的既有迁移；008 不会修复这些差异。刷新表使用独立的待处理索引，已完成的商品不会在每轮领取时被全表扫描。
 
