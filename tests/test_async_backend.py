@@ -263,7 +263,8 @@ def test_native_analysis_slots_allow_independent_jobs_and_keep_heavy_slot_exclus
 
 def test_async_detail_handler_commits_real_product_projection_and_analysis_job(mysql_engine, monkeypatch, tmp_path):
     from app.models import Product, ProductVariant, ProductImage, ProductContent
-    from app.models.analytics_read import AnalyticsRefreshRequest as Job, ProductReadModel
+    from app.models.analytics_read import AnalyticsRefreshRequest as Job, ProductReadModel, AnalyticsProductRollup, ProductReadAttribute
+    from app.services.analytics_rollup import ROLLUP_VERSION, SHARD_SIZE
     from app.services.analytics_refresh import enqueue
     from app.services.async_analytics import AsyncAnalyticsRunner
     from test_product_detail_storage import initial
@@ -297,6 +298,9 @@ def test_async_detail_handler_commits_real_product_projection_and_analysis_job(m
                 if projection_key:
                     db.execute(delete(Job).where(Job.kind == 'product_projection', Job.key_hash == projection_key))
                 db.execute(delete(ProductReadModel).where(ProductReadModel.product_id == product.id))
+                db.execute(delete(ProductReadAttribute).where(ProductReadAttribute.product_id == product.id))
+                db.execute(delete(AnalyticsProductRollup).where(AnalyticsProductRollup.schema_version == ROLLUP_VERSION,
+                    AnalyticsProductRollup.shard_id == product.id // SHARD_SIZE))
                 for model in (ProductVariant, ProductImage, ProductContent):
                     db.execute(delete(model).where(model.product_id == product.id))
                 db.execute(delete(Product).where(Product.id == product.id))
