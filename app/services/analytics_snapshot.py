@@ -308,9 +308,11 @@ def build_overview(db, params, stamp, deadline):
     summary.setdefault("historical_detail_products", 0)
     summary["excluded_price_context_products"] = db.scalar(select(func.count()).select_from(P).where(
         P.schema_version == VERSION, P.basis == "latest_valid_snapshot", P.platform == params["platform"],
-        P.region == params["region"], P.eligible.is_(False)))
+        P.region == params["region"], P.eligible.is_(False))
+        .with_hint(P, "FORCE INDEX (ix_read_products_scope)", dialect_name="mysql"))
     catalog_count = db.scalar(select(func.count()).select_from(P).where(P.schema_version == VERSION, P.basis == "current",
-        P.platform == params["platform"], P.region == params["region"]))
+        P.platform == params["platform"], P.region == params["region"])
+        .with_hint(P, "FORCE INDEX (ix_read_products_scope)", dialect_name="mysql"))
     histogram = [{"label": f"${low}–{high}" if high else f"${low}+", "count": sum(p >= low and (high is None or p < high) for p in prices)}
                  for low, high in zip([0, 20, 40, 60, 80, 100], [20, 40, 60, 80, 100, None])]
     return {"report_version": 2, **{k: params[k] for k in ("platform", "region", "currency", "pricing_context")}, "generated_at": stamp.isoformat(), "as_of": stamp.isoformat(),
