@@ -5,7 +5,7 @@ import json
 from datetime import datetime, timedelta
 from decimal import Decimal
 
-from sqlalchemy import and_, func, or_, select, true
+from sqlalchemy import and_, func, literal, or_, select, true, union_all
 
 from app.models import Shop
 from app.models.analytics_read import AnalyticsRefreshRequest, EventReadModel as E, ProductReadModel as P
@@ -84,20 +84,42 @@ def list_products(db, params, *, page=1, page_size=24, sort="recent"):
         order = (P.price_min.is_(None), *order)
     if sort.startswith("stock_"):
         order = (P.stock_status == "unknown", *order)
-    if sort.startswith("sku_count_"):
+    if sort == "sku_count_asc":
         order = (P.sku_count.is_(None), *order)
     # Match both directions of the recent index; a mixed-direction tie break
     # makes MySQL sort the entire catalog before returning the first page.
-    tie_break = P.product_id.desc() if sort in {"recent", "title_desc", "price_desc"} else P.product_id.asc()
+    descending = sort == "recent" or sort.endswith("_desc")
+    tie_break = P.product_id.desc() if descending else P.product_id.asc()
     query = product_query(db, params).with_only_columns(P.product_id.label("page_product_id"))
     if not (set(params) - set(SCOPE_FIELDS)):
         # Scope columns are correlated; MySQL can underestimate their combined
         # selectivity and switch back to a catalog filesort on the second page.
         index = {"recent": "ix_read_products_recent", "title": "ix_read_products_title",
-                 "title_desc": "ix_read_products_title", "price_desc": "ix_read_products_price"}.get(sort, "ix_read_products_catalog")
+                 "title_desc": "ix_read_products_title", "price_desc": "ix_read_products_price",
+                 "sku_count_desc": "ix_read_products_sku"}.get(sort, "ix_read_products_catalog")
         query = query.with_hint(P, f"FORCE INDEX ({index})", dialect_name="mysql")
-    identifiers = db.scalars(query.order_by(*order, tie_break)
-        .offset((page - 1) * page_size).limit(page_size + 1)).all()
+    offset, count = (page - 1) * page_size, page_size + 1
+    if sort in {"price_asc", "sku_count_asc", "stock_asc", "stock_desc"}:
+        column, index = ((P.price_min, "ix_read_products_price") if sort == "price_asc" else
+            (P.sku_count, "ix_read_products_sku") if sort == "sku_count_asc" else (P.stock_status, "ix_read_products_stock"))
+        unknown = column == "unknown" if sort.startswith("stock_") else column.is_(None)
+        known = column != "unknown" if sort.startswith("stock_") else column.is_not(None)
+        base = product_query(db, params).with_only_columns(P.product_id.label("product_id"), column.label("sort_value"))
+        if not (set(params) - set(SCOPE_FIELDS)):
+            base = base.with_hint(P, f"FORCE INDEX ({index})", dialect_name="mysql")
+        value_order = column.desc() if descending else column.asc()
+        # Each branch contributes at most the requested prefix. Sorting their
+        # scalar keys preserves unknown-last paging without a catalog COUNT or
+        # a filesort of every product on the first page.
+        known_rows = base.where(known).order_by(value_order, tie_break).limit(offset + count).subquery()
+        unknown_rows = base.where(unknown).order_by(tie_break).limit(offset + count).subquery()
+        merged = union_all(select(known_rows.c.product_id, known_rows.c.sort_value, literal(0).label("unknown")),
+            select(unknown_rows.c.product_id, unknown_rows.c.sort_value, literal(1).label("unknown"))).subquery()
+        identifiers = db.scalars(select(merged.c.product_id).order_by(merged.c.unknown,
+            merged.c.sort_value.desc() if descending else merged.c.sort_value.asc(),
+            merged.c.product_id.desc() if descending else merged.c.product_id.asc()).offset(offset).limit(count)).all()
+    else:
+        identifiers = db.scalars(query.order_by(*order, tie_break).offset(offset).limit(count)).all()
     # The caller's repeatable-read view keeps both queries consistent. Fetch
     # payloads by primary key after sorting; never filesort the JSON values.
     rows = db.execute(select(P.product_id, P.payload, Shop.canonical_name).join(Shop, Shop.id == P.shop_id)

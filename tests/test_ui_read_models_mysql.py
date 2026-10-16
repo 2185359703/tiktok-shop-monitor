@@ -60,6 +60,9 @@ def test_mysql_projection_and_snapshots_preserve_real_snapshot_fields(session, m
     current = list_products(session, parameters(config))
     assert current["items"][0]["variant_count"] == 2
     assert len(current["items"]) == 1
+    for sort in ("price_asc", "stock_desc", "sku_count_asc"):
+        assert list_products(session, parameters(config), sort=sort)["items"][0]["id"] == str(product.id)
+    assert list_products(session, parameters(config, {"price_unknown": True}), sort="price_asc")["items"] == []
     historical = next(row for row in rows if row["basis"] == "latest_valid_snapshot")["payload"]
     assert historical["title"] == page.detail.title
     assert historical["sku_count"] == 2 and historical["snapshot_id"] is not None
@@ -194,8 +197,8 @@ def test_ui_access_indexes_migrate_once_without_changing_columns(mysql_engine):
     with mysql_engine.connect() as connection:
         for index in INDEXES:
             connection.exec_driver_sql(f"ALTER TABLE `{index.table.name}` DROP INDEX `{index.name}`")
-    assert migrate(mysql_engine)["pending_statements"] == 4
+    assert migrate(mysql_engine)["pending_statements"] == 6
     result = migrate(mysql_engine, execute=True)
-    assert result == {"ready": True, "executed_statements": 4, "pending_statements": 0, "data_rows_modified": 0}
+    assert result == {"ready": True, "executed_statements": 6, "pending_statements": 0, "data_rows_modified": 0}
     assert columns() == before
     assert migrate(mysql_engine, execute=True)["executed_statements"] == 0
