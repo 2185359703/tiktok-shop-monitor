@@ -6,6 +6,7 @@ merge summaries, retaining every price, literal attribute and observed SKU count
 """
 
 import time
+import asyncio
 from collections import Counter, defaultdict
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -14,6 +15,7 @@ from types import SimpleNamespace
 
 from sqlalchemy import delete, insert, select, tuple_
 from sqlalchemy.orm import undefer
+from sqlalchemy.util.concurrency import await_only, in_greenlet
 
 from app.models.analytics_read import AnalyticsProductRollup as Rollup, AnalyticsRefreshRequest as Job, ProductReadModel as P, ProductReadAttribute as Attribute
 from app.services.analytics_refresh import VERSION, SCOPE_FIELDS, SUMMARY_KINDS, enqueue, job_row, key_for, now, scope
@@ -211,6 +213,10 @@ def read_totals(db, params, basis, deadline):
             raise TimeoutError("analytics_build_budget")
         if key in summary:
             result.merge(summary[key])
+        # Buffered driver reads can finish synchronously. Yield between bounded
+        # shards so lease renewal also runs during CPU-heavy merges.
+        if in_greenlet():
+            await_only(asyncio.sleep(0))
     return result
 
 
@@ -279,6 +285,9 @@ def update_attributes(db, rows):
 
 
 def backfill_rollups(db, config):
+    existing = db.get(Job, (VERSION, "control", key_for("control", control_params(config))))
+    if existing and existing.parameters.get("ready"):
+        return True
     control = job_row(db, "control", control_params(config))
     if control.parameters.get("ready"):
         return True

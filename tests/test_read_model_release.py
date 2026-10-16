@@ -40,7 +40,11 @@ def test_release_preserves_all_live_compose_overrides(release):
     services = json.loads(release.overlay.read_text())["services"]
     assert "api" not in services
     assert services["analytics"]["environment"]["DATABASE_URL"].startswith("${")
-    assert services["analytics"]["environment"]["ANALYTICS_CONCURRENCY"] == "4"
+    assert services["analytics"]["environment"]["ANALYTICS_CONCURRENCY"] == "1"
+    assert services["analytics"]["command"][-1] == "projections"
+    assert services["analytics-summaries"]["command"][-1] == "summaries"
+    assert services["analytics-heavy"]["command"][-1] == "heavy"
+    assert sum(float(services[name]["cpus"]) for name in ("analytics", "analytics-summaries", "analytics-heavy")) == 1
     assert services["api-candidate"]["ports"] == ["127.0.0.1:18081:8000"]
     release.write_overlay(public=True)
     assert json.loads(release.overlay.read_text())["services"]["analytics"]["environment"]["ANALYTICS_CONCURRENCY"] == "1"

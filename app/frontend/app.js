@@ -663,4 +663,4 @@ document.querySelectorAll('[data-icon]').forEach(el=>el.innerHTML=icon(el.datase
 installScatterInteractions({getData:()=>wbState.data,getShops:()=>[...allShops(),...(wbState.data?.shops||[])],onProduct:id=>openProduct(id)});
 installShopPicker({getShops:()=>state.shops.length?state.shops:wbState.data?.shops||[],getValue:()=>wbState.filters.shop_id,onChange:selectWorkbenchShop});
 navigate();
-request('/api/v2/ui/bootstrap').then(data=>{state.apiV2=data.schema_version===2;state.uiV2=Boolean(data.enabled);}).catch(error=>{state.apiV2=error.status!==404;state.uiV2=error.status!==404;}).finally(()=>{state.initializing=false;refresh({force:false});});
+(window.__shopScopeBootstrap||request('/api/v2/ui/bootstrap')).then(data=>{if(data.bootstrapErrorStatus!==undefined)throw {status:data.bootstrapErrorStatus};state.apiV2=data.schema_version===2;state.uiV2=Boolean(data.enabled);}).catch(error=>{state.apiV2=error.status!==404;state.uiV2=error.status!==404;}).finally(()=>{state.initializing=false;refresh({force:false});});

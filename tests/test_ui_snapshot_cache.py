@@ -45,7 +45,7 @@ def test_cache_reuses_result_and_disconnected_waiter_does_not_cancel_build():
         value = await second
         cached = await cache.get_or_build("one", "catalog_stats", build)
         assert value[1] == cached[1] and builds == [1]
-        assert len(redis.writes) == 1 and redis.writes[0][2] == 3
+        assert len(redis.writes) == 1 and redis.writes[0][2] == 30
         await cache.close()
     asyncio.run(scenario())
 

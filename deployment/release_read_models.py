@@ -20,6 +20,7 @@ from pathlib import Path
 
 
 SERVICES = ("api", "worker", "scheduler", "collection")
+ANALYTICS_SERVICES = ("analytics", "analytics-summaries", "analytics-heavy")
 
 
 class Release:
@@ -156,11 +157,13 @@ class Release:
                     for name in ("worker", "scheduler", "collection")}
         if not public:
             services["collection"]["command"] = ["python", "-m", "scripts.run_collection", "--poll-seconds", "300"]
-        analysis_env = {**environment, "DATABASE_URL": "${DATABASE_URL:?Set DATABASE_URL}", "ANALYTICS_CONCURRENCY": "1" if public else "4",
-                        "DB_POOL_SIZE": "3", "DB_MAX_OVERFLOW": "1"}
-        services["analytics"] = {"image": self.image, "command": ["python", "-m", "scripts.run_analytics"],
-            "environment": analysis_env, "volumes": [runtime], "mem_limit": "256m", "cpus": "0.5" if public else "1.0", "restart": "unless-stopped",
-            "stop_grace_period": "90s", "logging": {"driver": "json-file", "options": {"max-size": "5m", "max-file": "2"}}}
+        analysis_env = {**environment, "DATABASE_URL": "${DATABASE_URL:?Set DATABASE_URL}", "ANALYTICS_CONCURRENCY": "1",
+                        "DB_POOL_SIZE": "2", "DB_MAX_OVERFLOW": "1"}
+        for name, role, cpus, memory in (("analytics", "projections", "0.25", "192m"),
+                ("analytics-summaries", "summaries", "0.6", "256m"), ("analytics-heavy", "heavy", "0.15", "256m")):
+            services[name] = {"image": self.image, "command": ["python", "-m", "scripts.run_analytics", "--role", role],
+                "environment": analysis_env, "volumes": [runtime], "mem_limit": memory, "cpus": cpus, "restart": "unless-stopped",
+                "stop_grace_period": "90s", "logging": {"driver": "json-file", "options": {"max-size": "5m", "max-file": "2"}}}
         services["api-candidate"] = {"image": self.image, "command": ["python", "-m", "scripts.run_api"],
             "environment": {**analysis_env, "API_HOST": "0.0.0.0", "API_PORT": "8000", "API_TOKEN": "${API_TOKEN:?Set API_TOKEN}",
                 "REDIS_URL": "${REDIS_URL:-redis://redis:6379/0}", "DB_POOL_TIMEOUT": "3"},
@@ -183,6 +186,9 @@ class Release:
         if revision != self.commit:
             raise ValueError("Candidate image does not identify the committed revision")
         previous = {name: self.containers(name) for name in (*SERVICES, "analytics")}
+        for name in ANALYTICS_SERVICES[1:]:
+            if items := self.containers(name):
+                previous[name] = items
         if any(not items or not all(item["State"]["Running"] for item in items) for items in previous.values()):
             raise ValueError("All existing application roles must be running")
         if len(previous["worker"]) != 2 or len({item["Image"] for items in previous.values() for item in items}) != 1:
@@ -202,7 +208,7 @@ class Release:
             self.run(["docker", "run", "--rm", "--network", networks[0], "--env-file", str(self.root / "deployment.env"),
                 self.image, "python", "-m", module, "--execute"], timeout=90)
         self.write_overlay(public=False)
-        self.up("analytics", "api-candidate")
+        self.up(*ANALYTICS_SERVICES, "api-candidate")
         self.save("warming", public_api_changed=False, source_writers_changed=False)
 
     def prepare(self):
@@ -235,8 +241,8 @@ class Release:
                                   "--env", "ANALYTICS_ENABLED=0", self.image, "python", "-m", module, "--execute"])
                 self.save("migrating", migration=module, result=json.loads(result))
             self.write_overlay()
-            self.up("worker", "scheduler", "collection", "analytics", "api-candidate")
-            self.save("warming", public_api_changed=False, analytics_concurrency=4)
+            self.up("worker", "scheduler", "collection", *ANALYTICS_SERVICES, "api-candidate")
+            self.save("warming", public_api_changed=False, analytics_concurrency=1)
         except Exception:
             self.up("worker", "scheduler", "collection", compose=self.base)
             self.save("prepare_failed_old_writers_restored")
@@ -269,7 +275,7 @@ class Release:
                 raise ValueError("Default statistics are not ready")
         self.write_overlay(public=True)
         try:
-            self.up("worker", "scheduler", "collection", "api", "analytics")
+            self.up("worker", "scheduler", "collection", "api", *ANALYTICS_SERVICES)
             deadline = time.monotonic() + 90
             while time.monotonic() < deadline:
                 try:

@@ -1,5 +1,26 @@
 # Apply after the additive migration and after updating all source writers.
 # Use the same frozen image for api, worker, scheduler, collection and analytics.
+x-analysis: &analysis
+  image: ${ANALYTICS_IMAGE:?Set ANALYTICS_IMAGE to the frozen application image}
+  environment:
+    DATABASE_URL: ${DATABASE_URL:?Set DATABASE_URL}
+    SETTINGS_FILE: /opt/tiktok-shop-monitor/configs/server.toml
+    ANALYTICS_ENABLED: "1"
+    ANALYTICS_CONCURRENCY: ${ANALYTICS_CONCURRENCY:-1}
+    DB_POOL_SIZE: "2"
+    DB_MAX_OVERFLOW: "1"
+  mem_limit: 256m
+  restart: unless-stopped
+  stop_grace_period: 90s
+  depends_on:
+    mysql:
+      condition: service_healthy
+  logging:
+    driver: json-file
+    options:
+      max-size: "5m"
+      max-file: "2"
+
 services:
   api:
     environment:
@@ -15,24 +36,15 @@ services:
     environment:
       ANALYTICS_ENABLED: "1"
   analytics:
-    image: ${ANALYTICS_IMAGE:?Set ANALYTICS_IMAGE to the frozen application image}
-    command: ["python", "-m", "scripts.run_analytics"]
-    environment:
-      DATABASE_URL: ${DATABASE_URL:?Set DATABASE_URL}
-      SETTINGS_FILE: /opt/tiktok-shop-monitor/configs/server.toml
-      ANALYTICS_ENABLED: "1"
-      ANALYTICS_CONCURRENCY: ${ANALYTICS_CONCURRENCY:-1}
-      DB_POOL_SIZE: "3"
-      DB_MAX_OVERFLOW: "1"
-    mem_limit: 256m
-    cpus: "0.5"
-    restart: unless-stopped
-    stop_grace_period: 90s
-    depends_on:
-      mysql:
-        condition: service_healthy
-    logging:
-      driver: json-file
-      options:
-        max-size: "5m"
-        max-file: "2"
+    <<: *analysis
+    command: ["python", "-m", "scripts.run_analytics", "--role", "projections"]
+    mem_limit: 192m
+    cpus: "0.25"
+  analytics-summaries:
+    <<: *analysis
+    command: ["python", "-m", "scripts.run_analytics", "--role", "summaries"]
+    cpus: "0.6"
+  analytics-heavy:
+    <<: *analysis
+    command: ["python", "-m", "scripts.run_analytics", "--role", "heavy"]
+    cpus: "0.15"

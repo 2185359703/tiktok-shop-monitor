@@ -1,6 +1,8 @@
 """Small, optional Redis read-through cache; MySQL remains authoritative.
 
-The namespace has at most 32 entries of at most 200 KiB for at most 3 seconds.
+The namespace has at most 32 entries of at most 200 KiB. Fresh charts live for
+at most 30 seconds, never beyond their source freshness deadline; other results
+live for at most 3 seconds.
 No source observations, control-plane keys or Redis server settings are changed.
 """
 
@@ -25,7 +27,7 @@ if not redis.call('ZSCORE', KEYS[2], KEYS[1]) and redis.call('ZCARD', KEYS[2]) >
 end
 redis.call('SET', KEYS[1], ARGV[1], 'EX', ARGV[2])
 redis.call('ZADD', KEYS[2], now + tonumber(ARGV[2]), KEYS[1])
-redis.call('EXPIRE', KEYS[2], 10)
+redis.call('EXPIRE', KEYS[2], 60)
 return 1
 """
 
@@ -33,7 +35,7 @@ return 1
 class UISnapshotCache:
     def __init__(self, config, *, client=None):
         namespace = hashlib.sha256(str(config.database_url or "injected").encode()).hexdigest()[:20]
-        self.prefix = f"shopscope:ui:snapshots:v1:{namespace}:"
+        self.prefix = f"shopscope:ui:snapshots:v2:{namespace}:"
         self.client = client if client is not None else (Redis.from_url(config.redis_url, socket_connect_timeout=.08,
             socket_timeout=.08, retry_on_timeout=False, max_connections=4) if config.redis_url else None)
         self.pending, self.unavailable_until = {}, 0
@@ -65,7 +67,7 @@ class UISnapshotCache:
                 value = await builder()
                 if value[0] == 200:
                     meta = value[1].get("_meta", {})
-                    seconds = 3
+                    seconds = 30 if kind in {"overview", "workbench", "catalog_stats"} and meta.get("status") == "fresh" else 3
                     if meta.get("status") == "fresh":
                         stamp = datetime.fromisoformat(meta["snapshot_at"])
                         seconds = min(seconds, int(ttl(kind) - (datetime.now(timezone.utc) - stamp).total_seconds()))

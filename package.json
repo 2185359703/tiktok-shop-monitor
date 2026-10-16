@@ -1,0 +1,11 @@
+{
+  "name": "shopscope-frontend-build",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build:frontend": "node scripts/build_frontend.mjs"
+  },
+  "devDependencies": {
+    "esbuild": "0.25.12"
+  }
+}

@@ -25,6 +25,8 @@ def ready(db, config):
 
 
 def backfill_batch(db, config, *, batch_size=64):
+    if ready(db, config):
+        return True
     row = job_row(db, "control", {**scope(config), "name": "backfill"})
     state = dict(row.parameters)
     if state.get("ready"):

@@ -23,6 +23,7 @@ async def run(config, args):
     # absent statistic keys. Source aggregation still owns its explicit RR view.
     database = AsyncDatabase(make_async_engine(config.database_url).execution_options(isolation_level="READ COMMITTED"))
     background_workers = []
+    role = getattr(args, "role", "all")
     try:
         if not await database.read(lambda db: tables_ready(db.connection())):
             raise ValueError("Run scripts.migrate_analytics --execute and scripts.migrate_analytics_rollups --execute before enabling analytics.")
@@ -58,13 +59,19 @@ async def run(config, args):
                     only_kinds=SUMMARY_KINDS if summaries else HEAVY_KINDS, default_statistics=summaries)
                 await pause_until_stop(stop, .1 if processed else 1)
         if not args.once:
-            background_workers = [asyncio.create_task(refresh_light_resources()),
-                                  asyncio.create_task(refresh_heavy_resources()),
-                                  asyncio.create_task(refresh_heavy_resources(summaries=True))]
+            if role in {"all", "projections"}:
+                background_workers.append(asyncio.create_task(refresh_light_resources()))
+            if role in {"all", "heavy"}:
+                background_workers.append(asyncio.create_task(refresh_heavy_resources()))
+            if role in {"all", "summaries"}:
+                background_workers.append(asyncio.create_task(refresh_heavy_resources(summaries=True)))
         while not stop.is_set():
             for worker in background_workers:
                 if worker.done():
                     await worker
+            if role not in {"all", "projections"}:
+                await pause_until_stop(stop, 1)
+                continue
             if time.monotonic() - last_backfill >= 1 or args.once:
                 await database.transaction(backfill_batch, config)
                 await database.transaction(backfill_rollups, config)
@@ -93,7 +100,10 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--once", action="store_true")
     parser.add_argument("--status", action="store_true")
+    parser.add_argument("--role", choices=("all", "projections", "summaries", "heavy"), default="all")
     args = parser.parse_args(argv)
+    if args.once and args.role != "all":
+        parser.error("--once runs all roles; omit --role")
     return asyncio.run(run(Settings.load(), args))
 
 

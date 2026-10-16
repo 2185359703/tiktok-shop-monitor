@@ -76,7 +76,8 @@ def publish_ui(source, revision):
         (ROOT / 'deployment/public-openapi.json').write_text(json.dumps(schema, ensure_ascii=False), encoding='utf-8')
         checks = {}
         for relative, url in (('index.html', '/shopscope/'), ('app.js', '/shopscope/ui-assets/app.js'),
-                              ('api.js', '/shopscope/ui-assets/api.js'), ('product-detail.js', '/shopscope/ui-assets/product-detail.js')):
+                              ('api.js', '/shopscope/ui-assets/api.js'), ('product-detail.js', '/shopscope/ui-assets/product-detail.js'),
+                              ('app.bundle.js', '/shopscope/ui-assets/app.bundle.js'), ('styles.bundle.css', '/shopscope/ui-assets/styles.bundle.css')):
             with opener.open('http://127.0.0.1' + url, timeout=20) as response:
                 checks[relative] = hashlib.sha256(response.read()).hexdigest() == hashlib.sha256((directory / relative).read_bytes()).hexdigest()
         if not all(checks.values()):

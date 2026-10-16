@@ -1,0 +1,24 @@
+{
+  "esbuild": "0.25.12",
+  "sha256": {
+    "app/frontend/api.js": "67f9420e855b4e5233757bf53278f673a861a9ff288968899b6ea430248ecb7e",
+    "app/frontend/app.bundle.js": "d02861099fe942358ec33653420975baf8f23f5ddced410db5cec13b1d42dc26",
+    "app/frontend/app.js": "1e6f0316cbc69a5e83b58fa6ff9d05d7b438468121749c49cb269af593ae7c73",
+    "app/frontend/charts.js": "9347c0d892ea10996abf74737f942d22be3a352179e57d1ccc2d7e39021051f5",
+    "app/frontend/comparison.js": "e0cacbeb4e57abba5fb8549521d6c87e0803f9ff2c9500412776ac3a0b0cf5e6",
+    "app/frontend/matching-ui.js": "643ea3b89dad864bd0d3973ecd9546b5f981d27fa7c19b2b0caa4cd5bf85197d",
+    "app/frontend/product-detail.css": "b51c7212b5819d216840534c73943dfea5de93bb4b09b503b07a6fafc7a379b8",
+    "app/frontend/product-detail.js": "40b9c190ed114a0dfe3413b0bea1fa457706e8374684b908a00b6b193e5dc68a",
+    "app/frontend/product-table.js": "e294dedcba0d8fea767e1861684313b15138aa791946c50ca7f370706a2c13d7",
+    "app/frontend/query-cache.js": "ea19ac5eb128cba25d3d81469ea31a263ba12db5de3bee5b9a80f422492cc0d8",
+    "app/frontend/scatter-chart.css": "a04fde7e6274c34cab6318d949acfb29347078b5aba90266d5c9f6291736d709",
+    "app/frontend/scatter-chart.js": "67b68ee1a93e454d095167c2842a6e776a2b8dd7b822d8e9197d7841de61374d",
+    "app/frontend/shop-picker.css": "7059a638471295acb5bca574ea880ab32ab78675eeb92d57529985d9ad7c69a8",
+    "app/frontend/shop-picker.js": "d116172bb1c56e1fbead7becd316ce5f9f8e0da8767525e5a601862aefcba182",
+    "app/frontend/styles.bundle.css": "2052abc3d102fabda3c0f33fb434abf4ec15c651fa120062d38bd16b603e328b",
+    "app/frontend/styles.css": "e28b39c26f0325996ce126ccb3ef8fc2e40ed8cc2fc43ee61cb67f8de73db0b2",
+    "app/frontend/styles.entry.css": "f3ff53e75d8e4e942dc39f7866b3477c6cc4409b8d98f63046eaf2e8fff6c5a4",
+    "app/frontend/workbench.css": "cf9450f0cf6d94f7579710dcf5797d420554737c72ef3e6814b978d7fda84540",
+    "app/frontend/workbench.js": "87cb4b7a4f0b38b4b05dbdf3d8789f48135e1e3c17d8365a8f49c3b840cdbb5b"
+  }
+}

@@ -35,9 +35,18 @@ def test_root_serves_frontend_with_lifespan_and_without_database_use(static_clie
     assert response.content == (FRONTEND_DIRECTORY / "index.html").read_bytes()
 
 
+def test_shipped_bundles_match_the_source_modules():
+    import hashlib
+    import json
+    manifest = json.loads((FRONTEND_DIRECTORY / "build-manifest.json").read_text())
+    root = FRONTEND_DIRECTORY.parents[1]
+    for relative, expected in manifest["sha256"].items():
+        assert hashlib.sha256((root / relative).read_bytes()).hexdigest() == expected, "Run npm run build:frontend"
+
+
 @pytest.mark.parametrize(
     ("filename", "content_type"),
-    [("styles.css", "text/css"), ("app.js", "javascript"), ("api.js", "javascript"),
+    [("styles.css", "text/css"), ("styles.bundle.css", "text/css"), ("app.bundle.js", "javascript"), ("app.js", "javascript"), ("api.js", "javascript"),
      ("charts.js", "javascript"), ("product-table.js", "javascript"), ("comparison.js", "javascript"),
      ("workbench.js", "javascript"), ("matching-ui.js", "javascript"), ("workbench.css", "text/css")],
 )
