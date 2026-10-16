@@ -128,7 +128,7 @@ def list_products(db, params, *, page=1, page_size=24, sort="recent"):
             shop_query = select(P.product_id).select_from(P).join(ranks, ranks.c.shop_id == P.shop_id).where(
                 P.schema_version == VERSION, P.basis == "current", P.eligible == true(),
                 *(getattr(P, key) == params[key] for key in SCOPE_FIELDS)).with_hint(
-                    P, "FORCE INDEX (ix_read_products_catalog)", dialect_name="mysql")
+                    P, "FORCE INDEX (ix_read_products_scope)", dialect_name="mysql")
         else:
             shop_query = query.join(ranks, ranks.c.shop_id == P.shop_id)
         identifiers = db.scalars(shop_query.prefix_with("STRAIGHT_JOIN", dialect="mysql")

@@ -47,7 +47,8 @@ def read_snapshot(db, kind, params):
             keys = db.scalar(select(func.count()).select_from(Job).where(Job.schema_version == VERSION, Job.kind.in_(STAT_KINDS)))
             if count >= 32 or keys >= 128:
                 raise Busy("analytics_busy")
-        row = enqueue(db, kind, params)
+        if row is None or row.requested_revision == row.completed_revision:
+            row = enqueue(db, kind, params)
     if snapshot is not None and stamp < snapshot.stale_until:
         return 200, {**snapshot.payload, "_meta": {"schema_version": VERSION, "generation": str(snapshot.generation),
             "status": "fresh" if stamp < snapshot.fresh_until else "stale", "snapshot_at": snapshot.snapshot_at.isoformat(),

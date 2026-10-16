@@ -197,9 +197,9 @@ def test_ui_access_indexes_migrate_once_without_changing_columns(mysql_engine):
     with mysql_engine.connect() as connection:
         for index in INDEXES:
             connection.exec_driver_sql(f"ALTER TABLE `{index.table.name}` DROP INDEX `{index.name}`")
-    assert migrate(mysql_engine)["pending_statements"] == 6
+    assert migrate(mysql_engine)["pending_statements"] == 7
     result = migrate(mysql_engine, execute=True)
-    assert result == {"ready": True, "executed_statements": 6, "pending_statements": 0, "data_rows_modified": 0}
+    assert result == {"ready": True, "executed_statements": 7, "pending_statements": 0, "data_rows_modified": 0}
     assert columns() == before
     assert migrate(mysql_engine, execute=True)["executed_statements"] == 0
 
@@ -235,3 +235,33 @@ def test_light_summary_publishes_while_a_heavy_report_holds_the_slot(mysql_engin
             keys = [key_for(kind, params) for kind in ("overview", "task_counts")]
             db.execute(delete(AnalyticsSnapshot).where(AnalyticsSnapshot.key_hash.in_(keys)))
             db.execute(delete(Job).where(Job.key_hash.in_(keys)))
+
+
+def test_stale_snapshot_read_does_not_wait_for_its_pending_queue_row(mysql_engine):
+    from concurrent.futures import ThreadPoolExecutor
+    from sqlalchemy import delete
+    from app.models.analytics_read import AnalyticsRefreshRequest as Job
+    from app.services.analytics_refresh import key_for
+    factory = sessionmaker(mysql_engine)
+    params = parameters(Settings(), {"q": "LOCKED CACHE FIXTURE"})
+    key = key_for("catalog_stats", params)
+    try:
+        with factory.begin() as db:
+            row = enqueue(db, "catalog_stats", params)
+            row.completed_revision = 1
+            publish_snapshot(db, "catalog_stats", params, 1, {"total": 7}, now(db))
+            db.flush()
+            db.get(AnalyticsSnapshot, (2, key)).fresh_until = now(db) - timedelta(seconds=1)
+            enqueue(db, "catalog_stats", params, force=True)
+        with factory.begin() as publisher:
+            publisher.scalar(select(Job).where(Job.kind == "catalog_stats", Job.key_hash == key).with_for_update())
+            def read_cached():
+                with source_reader(factory, write=True) as db:
+                    return read_snapshot(db, "catalog_stats", params)
+            with ThreadPoolExecutor(max_workers=1) as executor:
+                status, result = executor.submit(read_cached).result(timeout=3)
+            assert status == 200 and result["total"] == 7 and result["_meta"]["status"] == "stale"
+    finally:
+        with factory.begin() as db:
+            db.execute(delete(AnalyticsSnapshot).where(AnalyticsSnapshot.key_hash == key))
+            db.execute(delete(Job).where(Job.key_hash == key))

@@ -5,3 +5,4 @@ ALTER TABLE `crawl_tasks` ADD INDEX `ix_crawl_tasks_summary` (`platform`, `regio
 ALTER TABLE `product_read_models` ADD INDEX `ix_read_products_title` (`platform`, `region`, `basis`, `title`, `product_id`), ALGORITHM=INPLACE, LOCK=NONE;
 ALTER TABLE `product_read_models` ADD INDEX `ix_read_products_sku` (`platform`, `region`, `basis`, `sku_count`, `product_id`), ALGORITHM=INPLACE, LOCK=NONE;
 ALTER TABLE `product_read_models` ADD INDEX `ix_read_products_stock` (`platform`, `region`, `basis`, `stock_status`, `product_id`), ALGORITHM=INPLACE, LOCK=NONE;
+ALTER TABLE `product_read_models` ADD INDEX `ix_read_products_scope` (`schema_version`, `basis`, `platform`, `region`, `currency`, `pricing_context`, `eligible`, `shop_id`, `product_id`), ALGORITHM=INPLACE, LOCK=NONE;

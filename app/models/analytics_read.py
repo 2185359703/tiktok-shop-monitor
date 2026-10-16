@@ -20,6 +20,8 @@ class ProductReadModel(Base):
         Index("ix_read_products_title", "platform", "region", "basis", "title", "product_id"),
         Index("ix_read_products_sku", "platform", "region", "basis", "sku_count", "product_id"),
         Index("ix_read_products_stock", "platform", "region", "basis", "stock_status", "product_id"),
+        Index("ix_read_products_scope", "schema_version", "basis", "platform", "region", "currency", "pricing_context",
+              "eligible", "shop_id", "product_id"),
         Index("ix_read_products_catalog", "schema_version", "basis", "platform", "region", "currency", "pricing_context",
               "eligible", "observed_at", "product_id", "shop_id", "price_min", "stock_status", "sku_count", "rating", "review_count", "title"),
         {**TABLE_OPTIONS, "comment": "可重建的商品分页与统计投影；区分当前观察和历史快照口径"},
