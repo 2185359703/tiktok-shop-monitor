@@ -256,7 +256,14 @@ class Release:
             (self.root / "deployment/active-read-model-release.json").write_text(json.dumps(active, indent=2) + "\n")
         except Exception:
             self.write_overlay(public=False)
-            self.up("api", compose=self.base)
+            previous_overlay = self.record.get("previous_public_overlay")
+            rollback = self.base
+            if previous_overlay:
+                previous_overlay = Path(previous_overlay).resolve()
+                if not previous_overlay.is_relative_to(self.evidence) or not previous_overlay.is_file():
+                    raise ValueError("Previous public API override is outside the release record")
+                rollback = [*self.base, "-f", str(previous_overlay)]
+            self.up("api", compose=rollback)
             self.save("cutover_failed_old_api_restored")
             raise
 
