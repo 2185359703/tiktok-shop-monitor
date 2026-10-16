@@ -59,7 +59,7 @@ const state = {
   pageNumber:1, pageSize:20, taskStatus:'', taskType:'', tasks:[], taskNext:null, taskCursors:['0'],
   selectedProducts:new Set(),productColumns:[...defaultColumns],productView:'table',sortKey:'observed_at',sortDirection:'desc',savedViews:[],columnsOpen:false,overviewTab:'overview',stockLabels:labels.stockStatuses,
   productData:null,productsLoading:false,productError:null,productCache:new Map(),
-  tasksLoading:false, taskError:null, reportJobs:[], reportJobsNext:null, reportJobsCursors:['0'], jobsLoading:false, jobsError:null,
+  tasksLoading:false, taskError:null, taskStats:null, reportJobs:[], reportJobsNext:null, reportJobsCursors:['0'], jobsLoading:false, jobsError:null,
 };
 let refreshController, tasksController, jobsController, detailsController, detailFocus, toastTimer;
 const wbState={data:null,dataKey:'',loading:true,error:null,filters:{shop_id:'',category:'',q:'',currency:'USD'},tab:'market',hiddenPanels:new Set(),categoryOptions:[],matchesSummary:null,matchItems:[]};
@@ -91,11 +91,14 @@ function snapshotConnectionLabel(data,readyLabel='数据已连接'){
   return `${data._meta.expired?'上次结果已过期':'上次结果'} · ${data._meta.refresh_state==='failed'?'等待重试':'后台更新中'}`;
 }
 function updateConnection(){
-  const data=state.page==='workbench'?wbState.data:state.report;
-  $('connection-label').textContent=data?snapshotConnectionLabel(data):state.capabilities?'部分数据可用':'正在连接服务';
+  const data={workbench:wbState.data,overview:state.report,shops:state.report,products:state.productStats,
+    matches:matchingState.tab==='candidates'?matchingState.candidates:null,events:state.eventStats,
+    tasks:state.taskStats,reports:state.reportArchive}[state.page];
+  $('connection-label').textContent=data?snapshotConnectionLabel(data):state.capabilities?'服务已连接':'正在连接服务';
   $('connection-dot').className=`status-dot ${state.capabilities||data?'online':'offline'}`;
   $('system-dot').className=`status-dot ${state.capabilities?'online':'offline'}`;
-  $('last-updated').textContent=data?.generated_at?`更新于 ${formatDate(data.generated_at)}`:'统计数据加载中';
+  const generated=data?.generated_at||data?._meta?.generated_at;
+  $('last-updated').textContent=generated?`${state.page==='reports'?'报告时间':'更新于'} ${formatDate(generated)}`:'';
   $('shop-count').textContent=number(state.overview?.shops_with_url??state.shops.length);
 }
 async function loadReportSummary({signal,force=false}={}){
@@ -282,7 +285,7 @@ async function refresh({reusePageRequest=false,force=true}={}) {
   if(!state.shops.length||force)pending.push(loadShopDirectory(signal).then(()=>{if(!signal.aborted){state.errors.shops=null;updateConnection();render();}}).catch(error=>{if(!signal.aborted)state.errors.shops=error;}));
   if(state.page==='overview'||state.uiV2&&['shops','products'].includes(state.page))pending.push(loadReportSummary({signal,force}));
   if(state.page==='events'){if(state.uiV2)pending.push(loadEvents({reset:true}));else pending.push(loadReportSummary({signal,force}));}
-  if(state.page==='tasks'){pending.push(loadTasks());if(state.uiV2)pending.push(pageRead('/api/v2/tasks/summary',{signal,onData:data=>{state.overview={...state.overview,tasks:data.tasks};render();}}).catch(()=>{}));}
+  if(state.page==='tasks'){pending.push(loadTasks());if(state.uiV2)pending.push(pageRead('/api/v2/tasks/summary',{signal,onData:data=>{state.taskStats=data;state.overview={...state.overview,tasks:data.tasks};updateConnection();render();}}).catch(()=>{}));}
   if(state.page==='reports')pending.push(loadJobs());
   if(!reusePageRequest){if(state.page==='workbench')pending.push(loadWorkbench({force}));if(state.page==='matches')pending.push(loadMatching());if(state.page==='products')pending.push(loadProducts());}
   render();await Promise.allSettled(pending);
@@ -303,7 +306,7 @@ async function loadProducts(){
     if(data.total_pages&&state.pageNumber>data.total_pages){state.pageNumber=data.total_pages;loadProducts();return;}
     if(state.uiV2){productStatsController?.abort();productStatsController=new AbortController();const statsSignal=productStatsController.signal;
       pageRead(queryPath('/api/v2/catalog/stats',filters),{signal:statsSignal,onData:stats=>{if(signal.aborted||statsSignal.aborted||state.productFilterKey!==filterKey)return;
-        state.productStats=stats;state.productData={...state.productData,total:stats.total,total_pages:Math.ceil(stats.total/state.pageSize),field_coverage:stats.field_coverage};if(state.page==='products')render();}}).catch(()=>{});}
+        state.productStats=stats;state.productData={...state.productData,total:stats.total,total_pages:Math.ceil(stats.total/state.pageSize),field_coverage:stats.field_coverage};updateConnection();if(state.page==='products')render();}}).catch(()=>{});}
   }catch(e){if(!signal.aborted){state.productError=e;if(!state.productData?._loaded)state.productData=null;}}
   finally{if(!signal.aborted){state.productsLoading=false;if(state.page==='products')render();}}
 }
