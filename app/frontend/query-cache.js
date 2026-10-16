@@ -54,3 +54,14 @@ export function abortableDelay(ms, signal) {
     signal?.addEventListener('abort',abort,{once:true});
   });
 }
+
+export function readSnapshotCache(entry, {now=Date.now(), maxAge=120000, freshFor=60000, staleFor=900000}={}) {
+  if(!entry?.data || entry.data._meta?.status==='pending')return {data:null,fresh:false};
+  const meta=entry.data._meta;
+  const stamp=meta?Date.parse(meta.snapshot_at||meta.generated_at):NaN;
+  const generated=meta?Date.parse(meta.generated_at||meta.snapshot_at):NaN;
+  const fresh=now-entry.savedAt<maxAge&&(!meta||(meta.status==='fresh'&&Number.isFinite(stamp)&&now-stamp<freshFor));
+  if(fresh||!meta)return {data:entry.data,fresh};
+  return {fresh:false,data:{...entry.data,_meta:{...meta,status:'stale',
+    expired:!!meta.expired||!Number.isFinite(generated)||now-generated>=staleFor}}};
+}

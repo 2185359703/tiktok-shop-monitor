@@ -1,5 +1,5 @@
 import { request, list, collect, write as writeRequest, labels, formatDate, money, safeUrl, csvDownload, deploymentPath } from './api.js';
-import { createQueryCache, abortableDelay } from './query-cache.js';
+import { createQueryCache, abortableDelay, readSnapshotCache } from './query-cache.js';
 import { renderEventTrend, renderStockDonut, renderShopRanking, renderPriceDistribution, renderSampleMetrics } from './charts.js';
 import { renderProductWorkspace, sortProducts, defaultColumns } from './product-table.js';
 import { buildComparison } from './comparison.js';
@@ -322,13 +322,13 @@ async function loadWorkbench({force=false}={}){
   wbController?.abort();wbController=new AbortController();const {signal}=wbController;
   const filters={...wbState.filters,q:(wbState.filters.q||'').trim()},hours=state.hours,key=workbenchKey(filters,hours);
   const current=()=>!signal.aborted&&key===workbenchKey();
-  const cached=workbenchCache.get(key),fresh=cached&&cached.data?._meta?.status!=='stale'&&Date.now()-cached.savedAt<120000;
+  const cached=workbenchCache.get(key),restored=readSnapshotCache(cached),fresh=restored.fresh;
   if(wbState.dataKey!==key)wbState.data=null;
-  if(fresh&&!force){wbState.data=cached.data;wbState.dataKey=key;}
+  if(restored.data&&!force){wbState.data=restored.data;wbState.dataKey=key;}
   wbState.loading=!(fresh&&!force);wbState.error=null;if(state.page==='workbench')render();
   try{
     if(!fresh||force){
-      const data=await pageRead(queryPath(state.uiV2?'/api/v2/analytics/workbench':'analytics/workbench',{...filters,lookback_hours:hours,...(state.uiV2?{topic:wbState.tab}:{})}),{signal,force,onData:data=>{if(current()){wbState.data=data;wbState.dataKey=key;wbState.loading=false;updateConnection();if(state.page==='workbench')render();}}});if(!current())return;
+      const data=await pageRead(queryPath(state.uiV2?'/api/v2/analytics/workbench':'analytics/workbench',{...filters,lookback_hours:hours,...(state.uiV2?{topic:wbState.tab}:{})}),{signal,force:force||Boolean(cached?.data?._meta&&!fresh),onData:data=>{if(current()){wbState.data=data;wbState.dataKey=key;wbState.loading=false;updateConnection();if(state.page==='workbench')render();}}});if(!current())return;
       if(String(data.scope?.shop_id||'')!==String(filters.shop_id||''))throw new Error('店铺数据范围不一致，请重试。');
       wbState.data=data;wbState.dataKey=key;
       workbenchCache.delete(key);workbenchCache.set(key,{data,savedAt:Date.now()});

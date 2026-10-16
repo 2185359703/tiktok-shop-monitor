@@ -1,6 +1,20 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {createQueryCache} from '../app/frontend/query-cache.js';
+import {createQueryCache,readSnapshotCache} from '../app/frontend/query-cache.js';
+
+test('revisits show expired snapshots without extending their source freshness',()=>{
+  const now=Date.parse('2026-10-16T12:00:00Z');
+  const data={value:42,_meta:{status:'fresh',snapshot_at:new Date(now-61000).toISOString(),expired:false}};
+  const restored=readSnapshotCache({data,savedAt:now-1000},{now});
+  assert.equal(restored.fresh,false);assert.equal(restored.data.value,42);
+  assert.equal(restored.data._meta.status,'stale');assert.equal(restored.data._meta.expired,false);
+  assert.equal(data._meta.status,'fresh');
+  assert.equal(readSnapshotCache({data,savedAt:now},{now:now+900000}).data._meta.expired,true);
+});
+
+test('pending snapshots are never restored as empty results',()=>{
+  assert.deepEqual(readSnapshotCache({data:{_meta:{status:'pending'}},savedAt:Date.now()}),{data:null,fresh:false});
+});
 
 test('deduplicates normalized queries and keeps cached values isolated',async()=>{
   let calls=0;
