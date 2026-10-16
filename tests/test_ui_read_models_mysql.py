@@ -265,3 +265,34 @@ def test_stale_snapshot_read_does_not_wait_for_its_pending_queue_row(mysql_engin
         with factory.begin() as db:
             db.execute(delete(AnalyticsSnapshot).where(AnalyticsSnapshot.key_hash == key))
             db.execute(delete(Job).where(Job.key_hash == key))
+
+
+def test_maintenance_skips_jobs_already_pending_or_publishing(mysql_engine):
+    from concurrent.futures import ThreadPoolExecutor
+    from sqlalchemy import delete
+    from app.models.analytics_read import AnalyticsRefreshRequest as Job
+    from app.services.analytics_refresh import job_row, scope
+    from app.services.analytics_runtime import maintain
+    config, factory, keys = Settings(), sessionmaker(mysql_engine), []
+    try:
+        with factory.begin() as db:
+            control = job_row(db, "control", {**scope(config), "name": "backfill"})
+            keys.append(control.key_hash)
+            control.parameters = {**control.parameters, "ready": True}
+            for kind in ("overview", "workbench", "catalog_stats", "task_counts", "matching_candidates"):
+                for hours in ((24, 168, 720) if kind in ("overview", "workbench") else (None,)):
+                    keys.append(enqueue(db, kind, parameters(config, lookback_hours=hours) if hours else parameters(config)).key_hash)
+        with factory.begin() as publisher:
+            publisher.scalar(select(Job).where(Job.kind == "workbench").limit(1).with_for_update())
+            def maintenance():
+                with factory.begin() as db:
+                    db.execute(text("SET SESSION innodb_lock_wait_timeout=1"))
+                    try:
+                        maintain(db, config)
+                    finally:
+                        db.execute(text("SET SESSION innodb_lock_wait_timeout=50"))
+            with ThreadPoolExecutor(max_workers=1) as executor:
+                executor.submit(maintenance).result(timeout=3)
+    finally:
+        with factory.begin() as db:
+            db.execute(delete(Job).where(Job.key_hash.in_(keys)))

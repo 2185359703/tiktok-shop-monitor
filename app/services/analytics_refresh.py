@@ -133,8 +133,8 @@ def clear_rolled_back_marks(session, previous_transaction):
 def invalidate_statistics(db, config):
     stamp = now(db)
     keys = db.execute(select(Job.kind, Job.key_hash).where(Job.schema_version == VERSION, Job.kind.in_(STAT_KINDS),
-        Job.last_requested_at >= stamp - timedelta(days=1)).with_hint(
-            Job, "FORCE INDEX (ix_analytics_due)", dialect_name="mysql")).all()
+        Job.requested_revision == Job.completed_revision, Job.last_requested_at >= stamp - timedelta(days=1)).with_hint(
+            Job, "FORCE INDEX (ix_analytics_due)", dialect_name="mysql").order_by(Job.kind, Job.key_hash)).all()
     for kind, key in keys:
         row = db.scalar(select(Job).where(Job.schema_version == VERSION, Job.kind == kind, Job.key_hash == key)
                         .with_for_update().execution_options(populate_existing=True))
@@ -156,7 +156,7 @@ def mark_market(db, platform, region, *, immediate=False):
     stamp = now(db)
     keys = db.execute(select(Job.kind, Job.key_hash).where(Job.schema_version == VERSION, Job.kind.in_(STAT_KINDS),
         Job.parameters["platform"].as_string() == platform, Job.parameters["region"].as_string() == region).with_hint(
-            Job, "FORCE INDEX (ix_analytics_due)", dialect_name="mysql")).all()
+            Job, "FORCE INDEX (ix_analytics_due)", dialect_name="mysql").order_by(Job.kind, Job.key_hash)).all()
     for kind, key in keys:
         row = db.scalar(select(Job).where(Job.schema_version == VERSION, Job.kind == kind, Job.key_hash == key)
                         .with_for_update().execution_options(populate_existing=True))
@@ -269,7 +269,11 @@ def claim_batch(db, config, *, prefer_statistics=False, slot_name="analysis_slot
     # Failed items retry alone so one malformed source cannot block its peers.
     # Time windows with identical product filters share one source aggregation.
     if row.kind in {"product_projection", "workbench", "overview"} and not row.attempts and batch_size > 1:
-        candidates = db.scalars(query.where(Job.kind == row.kind, Job.attempts == 0,
+        siblings = query if row.kind == "product_projection" else select(Job).where(
+            Job.schema_version == VERSION, Job.is_pending == true(), Job.requested_revision > Job.completed_revision,
+            or_(Job.lease_until.is_(None), Job.lease_until <= stamp),
+            *(Job.parameters[k].as_string() == v for k, v in scope(config).items()))
+        candidates = db.scalars(siblings.where(Job.kind == row.kind, Job.attempts == 0,
             Job.key_hash != row.key_hash).with_hint(Job, "FORCE INDEX (ix_analytics_pending)", dialect_name="mysql")
             .order_by(Job.available_at, Job.key_hash).limit(batch_size - 1).with_for_update(skip_locked=True)).all()
         base_parameters = {k: v for k, v in row.parameters.items() if k != "lookback_hours"}

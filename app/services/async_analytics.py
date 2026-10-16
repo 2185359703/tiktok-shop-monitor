@@ -61,7 +61,10 @@ class AsyncAnalyticsRunner:
             await asyncio.gather(renewal, return_exceptions=True)
             await self.database.transaction(complete_batch, leases, publish)
         except Exception as error:
-            logging.getLogger(__name__).warning("analytics_refresh_failed", extra={"kind": lease.kind, "error_type": type(error).__name__})
+            args = getattr(getattr(error, "orig", None), "args", ())
+            code = args[0] if args and isinstance(args[0], int) else None
+            logging.getLogger(__name__).warning("analytics_refresh_failed kind=%s error=%s database_code=%s",
+                                               lease.kind, type(error).__name__, code)
             try:
                 await self.database.transaction(failed_batch, leases, error)
             except LeaseLost:

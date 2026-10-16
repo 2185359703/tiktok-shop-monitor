@@ -49,12 +49,18 @@ def read_snapshot(db, kind, params):
                 raise Busy("analytics_busy")
         if row is None or row.requested_revision == row.completed_revision:
             row = enqueue(db, kind, params)
-    if snapshot is not None and stamp < snapshot.stale_until:
+    # A failed rebuild must not blank a dashboard that has a successful result.
+    # Expired chart results are explicitly labelled by the UI; short-lived
+    # counters retain their original expiration policy.
+    if snapshot is not None and (stamp < snapshot.stale_until or kind in {"overview", "workbench"}):
+        pending = bool(row and row.requested_revision > row.completed_revision)
+        active = bool(pending and row.lease_until and row.lease_until > stamp)
         return 200, {**snapshot.payload, "_meta": {"schema_version": VERSION, "generation": str(snapshot.generation),
             "status": "fresh" if stamp < snapshot.fresh_until else "stale", "snapshot_at": snapshot.snapshot_at.isoformat(),
+            "expired": stamp >= snapshot.stale_until,
             **snapshot.payload.get("_source", {}),
-            "generated_at": snapshot.generated_at.isoformat(), "refresh_state": "failed" if row and row.last_error_code else
-            "queued" if row and row.requested_revision > row.completed_revision else "idle"}}
+            "generated_at": snapshot.generated_at.isoformat(), "refresh_state": "queued" if active else
+            "failed" if row and row.last_error_code else "queued" if pending else "idle"}}
     return 202, {"_meta": {"schema_version": VERSION, "status": "pending", "query_key": key,
                            "refresh_state": "failed" if row and row.last_error_code else "queued"}}
 

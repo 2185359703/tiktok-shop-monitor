@@ -201,6 +201,38 @@ def test_busy_statistics_keep_batching_without_recording_source_failures(analyti
     assert len(claim_batch(analytics_db, Settings(), prefer_statistics=True)) == 3
 
 
+def test_due_window_refresh_includes_pending_siblings_to_share_one_scan(analytics_db):
+    for hours in (24, 168, 720):
+        row = enqueue(analytics_db, "workbench", parameters(Settings(), {"lookback_hours": hours}))
+        if hours != 24:
+            row.available_at = now(analytics_db) + timedelta(minutes=4)
+    analytics_db.flush()
+    leases = claim_batch(analytics_db, Settings(), prefer_statistics=True)
+    assert {item.parameters["lookback_hours"] for item in leases} == {24, 168, 720}
+
+
+@pytest.mark.parametrize("kind,expected_status", [("workbench", 200), ("overview", 200), ("catalog_stats", 202)])
+def test_expired_chart_cache_remains_explicitly_labelled_during_failed_refresh(analytics_db, kind, expected_status):
+    params = parameters(Settings())
+    stamp = now(analytics_db)
+    row = enqueue(analytics_db, kind, params)
+    row.completed_revision = 1
+    publish_snapshot(analytics_db, kind, params, 1, {"total": 7}, stamp)
+    analytics_db.flush()
+    snapshot = analytics_db.get(AnalyticsSnapshot, (VERSION, row.key_hash))
+    snapshot.fresh_until = stamp - timedelta(seconds=2)
+    snapshot.stale_until = stamp - timedelta(seconds=1)
+    enqueue(analytics_db, kind, params, force=True)
+    row.last_error_code = "OperationalError"
+    analytics_db.flush()
+    status, result = read_snapshot(analytics_db, kind, params)
+    assert status == expected_status
+    if status == 200:
+        assert result["total"] == 7
+        assert result["_meta"]["expired"] and result["_meta"]["status"] == "stale"
+        assert result["_meta"]["refresh_state"] == "failed"
+
+
 @pytest.mark.parametrize("kind", ["workbench", "overview"])
 def test_window_batches_match_independent_statistics_and_keep_filters_isolated(analytics_db, monkeypatch, kind):
     from app.models import ProductSnapshot

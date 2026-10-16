@@ -86,9 +86,13 @@ async function pageRead(path,{signal,onData,force=false,maxAge=15000}={}){
     await abortableDelay(Math.min(10000,2000*2**attempt++),signal);
   }
 }
+function snapshotConnectionLabel(data,readyLabel='数据已连接'){
+  if(data?._meta?.status!=='stale')return readyLabel;
+  return `${data._meta.expired?'上次结果已过期':'上次结果'} · ${data._meta.refresh_state==='failed'?'等待重试':'后台更新中'}`;
+}
 function updateConnection(){
   const data=state.page==='workbench'?wbState.data:state.report;
-  $('connection-label').textContent=data?data._meta?.status==='stale'?(data._meta.refresh_state==='failed'?'上次结果 · 更新暂不可用':'上次结果 · 后台更新中'):'数据已连接':state.capabilities?'部分数据可用':'正在连接服务';
+  $('connection-label').textContent=data?snapshotConnectionLabel(data):state.capabilities?'部分数据可用':'正在连接服务';
   $('connection-dot').className=`status-dot ${state.capabilities||data?'online':'offline'}`;
   $('system-dot').className=`status-dot ${state.capabilities?'online':'offline'}`;
   $('last-updated').textContent=data?.generated_at?`更新于 ${formatDate(data.generated_at)}`:'统计数据加载中';
@@ -252,7 +256,7 @@ function render() {
   const [title,desc,eyebrow]=meta[state.page];$('page-title').textContent=title;$('breadcrumb').textContent=title;$('page-description').textContent=desc;$('eyebrow').textContent=eyebrow;
   document.title=`${title} · ShopScope`;
   document.body.dataset.view=state.page;
-  if(state.page==='workbench'){if(wbState.loading&&!wbState.data){$('connection-label').textContent='正在读取筛选数据';$('last-updated').textContent='';}else if(wbState.error&&!wbState.data){$('connection-label').textContent='筛选数据暂不可用';$('last-updated').textContent='';}else if(wbState.data&&!wbState.error){$('connection-label').textContent='分析数据已连接';$('last-updated').textContent=`分析更新于 ${formatDate(wbState.data.generated_at)}`;$('connection-dot').className='status-dot online';}}
+  if(state.page==='workbench'){if(wbState.loading&&!wbState.data){$('connection-label').textContent='正在读取筛选数据';$('last-updated').textContent='';}else if(wbState.error&&!wbState.data){$('connection-label').textContent='筛选数据暂不可用';$('last-updated').textContent='';}else if(wbState.data&&!wbState.error){$('connection-label').textContent=snapshotConnectionLabel(wbState.data,'分析数据已连接');$('last-updated').textContent=`分析更新于 ${formatDate(wbState.data.generated_at)}`;$('connection-dot').className='status-dot online';}}
   document.querySelectorAll('[data-page]').forEach(a=>{const selected=a.dataset.page===state.page;a.classList.toggle('active',selected);if(selected)a.setAttribute('aria-current','page');else a.removeAttribute('aria-current');});
   $('window-select').hidden=['shops','tasks'].includes(state.page);
   $('page-content').setAttribute('aria-busy',String(state.page==='workbench'?wbState.loading:state.loading));

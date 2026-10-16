@@ -80,17 +80,23 @@ def maintain(db, config):
         db.delete(row)
     if not ready(db, config):
         return
+    defaults = []
     for kind in ("overview", "workbench", "catalog_stats", "task_counts", "matching_candidates"):
         windows = (24, 168, 720) if kind in ("overview", "workbench") else (None,)
         for hours in windows:
             params = {**scope(config), **({"lookback_hours": hours} if hours is not None else {})}
-            key = key_for(kind, params)
-            snapshot = db.get(AnalyticsSnapshot, (VERSION, key))
-            if snapshot is None or snapshot.fresh_until <= stamp:
-                enqueue(db, kind, params)
+            defaults.append((kind, key_for(kind, params), params))
+    for kind, key, params in sorted(defaults, key=lambda item: (item[0], item[1])):
+        request = db.get(Job, (VERSION, kind, key))
+        if request and request.requested_revision > request.completed_revision:
+            continue
+        snapshot = db.get(AnalyticsSnapshot, (VERSION, key))
+        if snapshot is None or snapshot.fresh_until <= stamp:
+            enqueue(db, kind, params)
     # Rolling windows and freshness buckets expire without new source writes.
     for row in db.scalars(select(Job).where(Job.schema_version == VERSION, Job.kind.in_(STAT_KINDS),
-        Job.last_requested_at >= stamp - timedelta(minutes=30), Job.requested_revision == Job.completed_revision)).all():
+        Job.last_requested_at >= stamp - timedelta(minutes=30), Job.requested_revision == Job.completed_revision)
+        .order_by(Job.kind, Job.key_hash)).all():
         snapshot = db.get(AnalyticsSnapshot, (VERSION, row.key_hash))
         if snapshot and snapshot.fresh_until <= stamp:
             enqueue(db, row.kind, row.parameters)

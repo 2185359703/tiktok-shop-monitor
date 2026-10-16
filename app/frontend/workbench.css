@@ -1,6 +1,6 @@
 /* Clear, comparable data on the existing blue and white workspace. */
-@font-face{font-family:'DM Sans';font-style:normal;font-weight:100 1000;font-display:swap;src:url('/ui-assets/fonts/dm-sans-latin.woff2') format('woff2')}
-@font-face{font-family:'Manrope';font-style:normal;font-weight:200 800;font-display:swap;src:url('/ui-assets/fonts/manrope-latin.woff2') format('woff2')}
+@font-face{font-family:'DM Sans';font-style:normal;font-weight:100 1000;font-display:swap;src:url('./fonts/dm-sans-latin.woff2') format('woff2')}
+@font-face{font-family:'Manrope';font-style:normal;font-weight:200 800;font-display:swap;src:url('./fonts/manrope-latin.woff2') format('woff2')}
 :root{--font:'DM Sans','Microsoft YaHei UI','Microsoft YaHei',sans-serif;--display:'Manrope','Microsoft YaHei UI','Microsoft YaHei',sans-serif}
 .product-photo [hidden],.photo-stage [hidden]{display:none!important}
 .photo-gallery .photo-stage{flex:1 1 100%;width:100%}
