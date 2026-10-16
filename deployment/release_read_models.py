@@ -156,7 +156,7 @@ class Release:
         analysis_env = {**environment, "DATABASE_URL": "${DATABASE_URL:?Set DATABASE_URL}", "ANALYTICS_CONCURRENCY": "1" if public else "4",
                         "DB_POOL_SIZE": "3", "DB_MAX_OVERFLOW": "1"}
         services["analytics"] = {"image": self.image, "command": ["python", "-m", "scripts.run_analytics"],
-            "environment": analysis_env, "volumes": [runtime], "mem_limit": "256m", "cpus": "0.5", "restart": "unless-stopped",
+            "environment": analysis_env, "volumes": [runtime], "mem_limit": "256m", "cpus": "0.5" if public else "1.0", "restart": "unless-stopped",
             "stop_grace_period": "90s", "logging": {"driver": "json-file", "options": {"max-size": "5m", "max-file": "2"}}}
         services["api-candidate"] = {"image": self.image, "command": ["python", "-m", "scripts.run_api"],
             "environment": {**analysis_env, "API_HOST": "0.0.0.0", "API_PORT": "8000", "API_TOKEN": "${API_TOKEN:?Set API_TOKEN}", "DB_POOL_TIMEOUT": "3"},

@@ -47,6 +47,14 @@ def test_list_has_no_aggregate_and_counts_only_observed_skus(analytics_db):
     assert list_products(analytics_db, parameters(Settings(), {"attribute": "color", "value": "Red"}))["items"]
 
 
+def test_recent_pages_break_equal_observation_times_without_duplicates(analytics_db):
+    project(analytics_db)
+    first = list_products(analytics_db, parameters(Settings()), page=1, page_size=2)
+    second = list_products(analytics_db, parameters(Settings()), page=2, page_size=2)
+    assert [item["id"] for item in first["items"]] == ["4", "3"]
+    assert [item["id"] for item in second["items"]] == ["2", "1"]
+
+
 def test_projection_statistics_preserve_existing_workbench_numbers(analytics_db):
     import time
     project(analytics_db)
@@ -147,6 +155,49 @@ def test_failed_batch_retries_members_individually(analytics_db):
     analytics_db.flush()
     retry = claim_batch(analytics_db, Settings())
     assert len(retry) == 1
+
+
+@pytest.mark.parametrize("kind", ["workbench", "overview"])
+def test_window_batches_match_independent_statistics_and_keep_filters_isolated(analytics_db, monkeypatch, kind):
+    from app.models import ProductSnapshot
+    from app.services import analytics_snapshot
+    analytics_db.get(ProductSnapshot, 2).captured_at = NOW - timedelta(hours=48)
+    project(analytics_db)
+    monkeypatch.setattr(analytics_snapshot, "now", lambda db: NOW)
+    config = Settings()
+    windows = [parameters(config, {"lookback_hours": hours}) for hours in (24, 168, 720)]
+    for params in windows:
+        enqueue(analytics_db, kind, params)
+    enqueue(analytics_db, kind, parameters(config, {"lookback_hours": 24, "shop_id": 2}))
+    leases = claim_batch(analytics_db, config, prefer_statistics=True)
+    assert len(leases) == 3
+    assert {item.parameters["lookback_hours"] for item in leases} == {24, 168, 720}
+    expected = [analytics_snapshot.build_snapshot(analytics_db, config, kind, params) for params in windows]
+    original = getattr(analytics_snapshot, "build_current" if kind == "workbench" else "build_overview")
+    calls = []
+    def counted(*args, **kwargs):
+        calls.append(1)
+        return original(*args, **kwargs)
+    monkeypatch.setattr(analytics_snapshot, "build_current" if kind == "workbench" else "build_overview", counted)
+    actual = analytics_snapshot.build_snapshots(analytics_db, config, kind, windows)
+    assert actual == expected
+    assert len(calls) == 1
+    assert actual[0][0]["summary"]["events_in_window"] < actual[1][0]["summary"]["events_in_window"]
+
+
+def test_statistics_drop_large_urls_but_preserve_image_coverage(analytics_db):
+    import time
+    from app.services.analytics_snapshot import build_catalog_stats, rows_for
+    project(analytics_db)
+    row = analytics_db.get(ProductReadModel, (VERSION, "current", 1))
+    row.payload = {**row.payload, "image_url": "https://example.com/" + "x" * 8000,
+                   "thumbnail_url": "https://example.com/" + "y" * 8000}
+    analytics_db.flush()
+    rows = list(rows_for(analytics_db, parameters(Settings()), "current", time.monotonic() + 30))
+    assert rows[0][1]["image_url"] == 1 and "thumbnail_url" not in rows[0][1]
+    stats = build_catalog_stats(analytics_db, parameters(Settings()), NOW, time.monotonic() + 30)
+    assert next(field for field in stats["field_coverage"] if field["field"] == "image")["known_count"] == 1
+    assert len(row.payload["image_url"]) > 8000
 
 
 def test_transactional_dirty_mark_rolls_back_with_price_write(analytics_db):

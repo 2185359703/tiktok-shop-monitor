@@ -232,11 +232,14 @@ def claim_batch(db, config, *, prefer_statistics=False, slot_name="analysis_slot
         return ()
     rows = [row]
     # Failed items retry alone so one malformed source cannot block its peers.
-    # Statistics and events retain their individual publication/sequence rules.
-    if row.kind == "product_projection" and not row.attempts and batch_size > 1:
-        rows.extend(db.scalars(query.where(Job.kind == "product_projection", Job.attempts == 0,
+    # Time windows with identical product filters share one source aggregation.
+    if row.kind in {"product_projection", "workbench", "overview"} and not row.attempts and batch_size > 1:
+        candidates = db.scalars(query.where(Job.kind == row.kind, Job.attempts == 0,
             Job.key_hash != row.key_hash).with_hint(Job, "FORCE INDEX (ix_analytics_pending)", dialect_name="mysql")
-            .order_by(Job.available_at, Job.key_hash).limit(batch_size - 1).with_for_update(skip_locked=True)).all())
+            .order_by(Job.available_at, Job.key_hash).limit(batch_size - 1).with_for_update(skip_locked=True)).all()
+        base_parameters = {k: v for k, v in row.parameters.items() if k != "lookback_hours"}
+        rows.extend(item for item in candidates if row.kind == "product_projection" or
+                    {k: v for k, v in item.parameters.items() if k != "lookback_hours"} == base_parameters)
     token = str(uuid4())
     for item in (slot, *rows):
         item.lease_token, item.lease_until = token, stamp + timedelta(seconds=LEASE_SECONDS)

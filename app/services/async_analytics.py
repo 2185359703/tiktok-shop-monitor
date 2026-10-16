@@ -6,7 +6,7 @@ import logging
 from app.services.analytics_runtime import source_reader
 from app.services.analytics_projection import build_event, build_products, publish_event, publish_product
 from app.services.analytics_refresh import LeaseLost, claim_batch, complete_batch, failed_batch, heartbeat_batch
-from app.services.analytics_snapshot import build_snapshot, publish_snapshot
+from app.services.analytics_snapshot import build_snapshots, publish_snapshot
 from app.services.analytics_refresh import STAT_KINDS
 from app.services.async_heavy_slot import heavy_slot
 
@@ -29,8 +29,11 @@ class AsyncAnalyticsRunner:
             if lease.kind == "event_projection":
                 data = build_event(db, self.config, int(lease.parameters["event_id"]))
                 return lambda session: publish_event(session, self.config, data)
-            data, stamp = build_snapshot(db, self.config, lease.kind, lease.parameters)
-            return lambda session: publish_snapshot(session, lease.kind, lease.parameters, lease.revision, data, stamp)
+            results = build_snapshots(db, self.config, lease.kind, [item.parameters for item in leases])
+            def publish(session):
+                for item, (data, stamp) in zip(leases, results):
+                    publish_snapshot(session, item.kind, item.parameters, item.revision, data, stamp)
+            return publish
 
     async def run_once(self):
         prefer_statistics = self.steps % 8 == 7

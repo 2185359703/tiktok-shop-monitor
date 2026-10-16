@@ -2,11 +2,12 @@
 
 import json
 import time
+from copy import deepcopy
 from collections import Counter, defaultdict
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 
-from sqlalchemy import Integer, func, literal_column, select, true
+from sqlalchemy import Integer, JSON, case, func, literal_column, select, true, type_coerce
 
 from app.models import Product, Shop
 from app.models.analytics_read import AnalyticsRefreshRequest as Job, AnalyticsSnapshot as Snapshot, EventReadModel as E, ProductReadModel as P
@@ -29,7 +30,7 @@ class Busy(RuntimeError):
 
 
 def ttl(kind):
-    return 15 if kind == "task_counts" else 30 if kind == "events_summary" else 300 if kind == "matching_candidates" else 60
+    return 15 if kind == "task_counts" else 30 if kind == "events_summary" else 300
 
 
 def read_snapshot(db, kind, params):
@@ -82,7 +83,17 @@ def rows_for(db, params, basis, deadline, *, include_facts=True):
     while True:
         if time.monotonic() > deadline:
             raise TimeoutError("analytics_build_budget")
-        columns = [P.product_id, P.shop_id, P.category, P.price_min, P.payload, Shop.canonical_name]
+        payload = P.payload
+        if basis == "current":
+            # Image URLs dominate list payload size but statistics only need
+            # presence. Keep the actual URLs untouched in the paging table.
+            payload = type_coerce(func.json_remove(func.json_set(P.payload, "$.image_url",
+                case((func.length(P.payload["image_url"].as_string()) > 0, 1), else_=0)),
+                "$.thumbnail_url", "$.product_url", "$.image_observed_at", "$.first_seen_at", "$.last_seen_at",
+                "$.original_price_min", "$.original_price_max", "$.price_max", "$.availability_status",
+                "$.currency", "$.pricing_context", "$.platform_product_id", "$.fit", "$.garment_length", "$.pattern",
+                "$.sales_count", "$.sales_count_text", "$.price_kind"), JSON).label("payload")
+        columns = [P.product_id, P.shop_id, P.category, P.price_min, payload, Shop.canonical_name]
         if include_facts:
             columns.append(P.facts)
         query = product_query(db, params, basis).with_only_columns(*columns).where(P.product_id > after)
@@ -328,7 +339,7 @@ def build_catalog_stats(db, params, stamp, deadline):
 
 
 def build_snapshot(db, config, kind, params):
-    stamp, deadline = now(db), time.monotonic() + 30
+    stamp, deadline = now(db), time.monotonic() + config.analytics_build_budget_seconds
     if kind == "workbench":
         payload = build_current(db, params, stamp, deadline)
     elif kind == "catalog_stats":
@@ -353,3 +364,28 @@ def build_snapshot(db, config, kind, params):
     payload["_source"] = {"source_pending_count": pending,
         "oldest_pending_age_seconds": max(0, int((stamp - oldest).total_seconds())) if oldest else 0}
     return json_value(payload), stamp
+
+
+def build_snapshots(db, config, kind, parameters):
+    """Share window-independent facts within the same repeatable-read view."""
+    deadline = time.monotonic() + config.analytics_build_budget_seconds
+    first = parameters[0]
+    if len(parameters) > 1 and (kind not in {"workbench", "overview"} or any(
+        {k: v for k, v in params.items() if k != "lookback_hours"} !=
+        {k: v for k, v in first.items() if k != "lookback_hours"} for params in parameters)):
+        raise ValueError("incompatible_statistics_batch")
+    payload, stamp = build_snapshot(db, config, kind, first)
+    results = [(payload, stamp)]
+    for params in parameters[1:]:
+        result = deepcopy(payload)
+        events = event_stats(db, params, stamp, product_filtered=kind == "workbench")
+        result["summary"]["events_in_window"] = events["events_in_window"]
+        if kind == "workbench":
+            result.update(scope=params, **{key: events[key] for key in ("window", "events_by_type", "event_trend_daily")})
+        else:
+            result.update(since=events["window"]["since"], events=events["events"], event_buckets=events["event_buckets"],
+                          events_truncated=events["events_in_window"] > len(events["events"]))
+        results.append((json_value(result), stamp))
+        if time.monotonic() > deadline:
+            raise TimeoutError("analytics_build_budget")
+    return results

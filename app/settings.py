@@ -32,6 +32,7 @@ class Settings:
     review_concurrency: int = 4
     worker_concurrency: int = 8
     analytics_concurrency: int = 4
+    analytics_build_budget_seconds: int = 300
     review_max_pages: int = 50
     review_http_backend: str = "curl_cffi"
     snapshot_interval_seconds: int = 3600
@@ -89,6 +90,8 @@ class Settings:
         if any(type(value) is not int or not 1 <= value <= 32
                for value in (self.worker_concurrency, self.analytics_concurrency)):
             raise ValueError("Worker及分析协程并发数必须为1至32。")
+        if type(self.analytics_build_budget_seconds) is not int or not 30 <= self.analytics_build_budget_seconds <= 600:
+            raise ValueError("后台统计预算必须是30至600秒的整数。")
         if type(self.review_max_pages) is not int or not 1 <= self.review_max_pages <= 500:
             raise ValueError("评论页数预算必须为1至500；达到预算不代表采集完成。")
         if self.review_http_backend not in {"httpx", "curl_cffi"}:
@@ -176,6 +179,8 @@ class Settings:
         values["port"] = int(os.environ.get("API_PORT", values.get("port", 8000)))
         if os.environ.get("ANALYTICS_CONCURRENCY") is not None:
             values["analytics_concurrency"] = int(os.environ["ANALYTICS_CONCURRENCY"])
+        if os.environ.get("ANALYTICS_BUILD_BUDGET_SECONDS") is not None:
+            values["analytics_build_budget_seconds"] = int(os.environ["ANALYTICS_BUILD_BUDGET_SECONDS"])
         for key in ("database_url", "rabbitmq_url", "redis_url", "api_token", "detail_proxy_url"):
             values[key] = os.environ.get(key.upper()) or None
         return cls(**values)

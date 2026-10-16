@@ -86,7 +86,10 @@ def list_products(db, params, *, page=1, page_size=24, sort="recent"):
         order = (P.stock_status == "unknown", *order)
     if sort.startswith("sku_count_"):
         order = (P.sku_count.is_(None), *order)
-    rows = db.execute(product_query(db, params).order_by(*order, P.product_id)
+    # Match both directions of the recent index; a mixed-direction tie break
+    # makes MySQL sort the entire catalog before returning the first page.
+    tie_break = P.product_id.desc() if sort == "recent" else P.product_id.asc()
+    rows = db.execute(product_query(db, params).order_by(*order, tie_break)
                       .offset((page - 1) * page_size).limit(page_size + 1)).all()
     return {"items": [{**row.payload, "shop_name": name} for row, name in rows[:page_size]],
             "page": page, "page_size": page_size, "has_more": len(rows) > page_size,
