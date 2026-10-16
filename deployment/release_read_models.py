@@ -194,7 +194,7 @@ class Release:
             self.stop_sources()
             backup = self.backup_schema_and_control(mysql)
             self.save("backed_up", **backup)
-            for module in ("scripts.migrate_shop_profiles", "scripts.migrate_product_reviews", "scripts.migrate_analytics"):
+            for module in ("scripts.migrate_shop_profiles", "scripts.migrate_product_reviews", "scripts.migrate_analytics", "scripts.migrate_ui_indexes"):
                 result = self.run(["docker", "run", "--rm", "--network", networks[0], "--env-file", str(self.root / "deployment.env"),
                                   "--env", "ANALYTICS_ENABLED=0", self.image, "python", "-m", module, "--execute"])
                 self.save("migrating", migration=module, result=json.loads(result))

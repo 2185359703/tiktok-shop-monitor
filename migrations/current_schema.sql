@@ -139,6 +139,8 @@ CREATE TABLE IF NOT EXISTS product_read_models (
 	CONSTRAINT ck_product_read_models_basis CHECK (basis IN ('current','latest_valid_snapshot'))
 ) ENGINE=InnoDB CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='可重建的商品分页与统计投影；区分当前观察和历史快照口径';
 
+CREATE INDEX ix_read_products_catalog ON product_read_models (schema_version, basis, platform, region, currency, pricing_context, eligible, observed_at, product_id, shop_id, price_min, stock_status, sku_count, rating, review_count, title);
+
 CREATE INDEX ix_read_products_price ON product_read_models (platform, region, basis, price_min, product_id);
 
 CREATE INDEX ix_read_products_recent ON product_read_models (platform, region, basis, observed_at, product_id);
@@ -312,6 +314,8 @@ CREATE TABLE IF NOT EXISTS products (
 CREATE INDEX ix_products_category_price ON products (region, normalized_category, price_min);
 
 CREATE INDEX ix_products_next_capture ON products (availability_status, next_capture_at);
+
+CREATE INDEX ix_products_recent_detail ON products (platform, region, last_success_at, id, title);
 
 CREATE INDEX ix_products_shop_status ON products (shop_id, availability_status);
 

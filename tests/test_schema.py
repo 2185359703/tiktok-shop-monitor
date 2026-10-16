@@ -37,6 +37,11 @@ def test_current_schema_matches_registered_models():
     assert MatchStatus.CONFIRMED.value == "confirmed"
 
 
+def test_ui_index_migration_matches_models():
+    from scripts.migrate_ui_indexes import additive_sql
+    assert (MIGRATIONS / "009_ui_read_indexes.sql").read_text(encoding="utf-8") == additive_sql()
+
+
 def test_all_tables_and_columns_have_chinese_comments():
     for table in Base.metadata.tables.values():
         assert table.comment and any("\u4e00" <= c <= "\u9fff" for c in table.comment), table.name

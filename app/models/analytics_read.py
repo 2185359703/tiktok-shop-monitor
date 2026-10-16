@@ -17,6 +17,8 @@ class ProductReadModel(Base):
         Index("ix_read_products_recent", "platform", "region", "basis", "observed_at", "product_id"),
         Index("ix_read_products_shop", "platform", "region", "basis", "shop_id", "product_id"),
         Index("ix_read_products_price", "platform", "region", "basis", "price_min", "product_id"),
+        Index("ix_read_products_catalog", "schema_version", "basis", "platform", "region", "currency", "pricing_context",
+              "eligible", "observed_at", "product_id", "shop_id", "price_min", "stock_status", "sku_count", "rating", "review_count", "title"),
         {**TABLE_OPTIONS, "comment": "可重建的商品分页与统计投影；区分当前观察和历史快照口径"},
     )
     schema_version: Mapped[int] = mapped_column(Integer, primary_key=True, comment="派生结构版本")

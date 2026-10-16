@@ -5,7 +5,7 @@ import json
 from datetime import datetime, timedelta
 from decimal import Decimal
 
-from sqlalchemy import and_, func, or_, select
+from sqlalchemy import and_, func, or_, select, true
 
 from app.models import Shop
 from app.models.analytics_read import AnalyticsRefreshRequest, EventReadModel as E, ProductReadModel as P
@@ -28,7 +28,7 @@ def parameters(config, options=None, **extra):
 
 
 def product_conditions(params, basis="current"):
-    clauses = [P.schema_version == VERSION, P.basis == basis, P.eligible.is_(True),
+    clauses = [P.schema_version == VERSION, P.basis == basis, P.eligible == true(),
                *(getattr(P, k) == params[k] for k in ("platform", "region", "currency", "pricing_context")),
                Shop.platform == params["platform"], Shop.region == params["region"]]
     if params.get("shop_id"):
@@ -89,13 +89,18 @@ def list_products(db, params, *, page=1, page_size=24, sort="recent"):
     # Match both directions of the recent index; a mixed-direction tie break
     # makes MySQL sort the entire catalog before returning the first page.
     tie_break = P.product_id.desc() if sort == "recent" else P.product_id.asc()
-    query = product_query(db, params).with_only_columns(P.payload, Shop.canonical_name)
-    if sort == "recent" and not (set(params) - set(SCOPE_FIELDS)):
+    query = product_query(db, params).with_only_columns(P.product_id.label("page_product_id"))
+    if not (set(params) - set(SCOPE_FIELDS)):
         # Scope columns are correlated; MySQL can underestimate their combined
         # selectivity and switch back to a catalog filesort on the second page.
-        query = query.with_hint(P, "FORCE INDEX (ix_read_products_recent)", dialect_name="mysql")
-    rows = db.execute(query.order_by(*order, tie_break)
-                      .offset((page - 1) * page_size).limit(page_size + 1)).all()
+        query = query.with_hint(P, "FORCE INDEX (ix_read_products_catalog)", dialect_name="mysql")
+    page_ids = query.order_by(*order, tie_break).offset((page - 1) * page_size).limit(page_size + 1).subquery()
+    # Sort narrow IDs first. Otherwise MySQL can carry every JSON payload into
+    # its filesort even though only one page of payloads will be returned.
+    rows = db.execute(select(P.payload, Shop.canonical_name).join(Shop, Shop.id == P.shop_id)
+        .join(page_ids, page_ids.c.page_product_id == P.product_id)
+        .where(P.schema_version == VERSION, P.basis == "current")
+        .order_by(*order, tie_break)).all()
     return {"items": [{**payload, "shop_name": name} for payload, name in rows[:page_size]],
             "page": page, "page_size": page_size, "has_more": len(rows) > page_size,
             "total": None, "total_pages": None, "scope": params, "field_coverage": [], "image_readiness": True}

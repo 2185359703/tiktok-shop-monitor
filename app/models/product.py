@@ -32,6 +32,7 @@ class Product(PrimaryKeyMixin, MarketMixin, PriceMixin, TimestampMixin, Base):
         Index("ix_products_shop_status", "shop_id", "availability_status"),
         Index("ix_products_category_price", "region", "normalized_category", "price_min"),
         Index("ix_products_next_capture", "availability_status", "next_capture_at"),
+        Index("ix_products_recent_detail", "platform", "region", "last_success_at", "id", "title"),
         *price_checks(),
         CheckConstraint("data_version >= 1", name="data_version"),
         CheckConstraint("rating IS NULL OR (rating >= 0 AND rating <= 5)", name="rating"),

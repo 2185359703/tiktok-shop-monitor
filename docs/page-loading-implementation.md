@@ -36,7 +36,7 @@
 .\.venv\Scripts\python.exe -m scripts.migrate_analytics --execute
 ```
 
-迁移只创建 `product_read_models`、`event_read_models`、`analytics_refresh_requests` 和 `analytics_snapshots`，不 ALTER 原业务表。对应 SQL 为 [008_analytics_read_models.sql](../migrations/008_analytics_read_models.sql)。历史 SQL 不变，完整模式快照已同步注册模型。
+008 迁移创建 `product_read_models`、`event_read_models`、`analytics_refresh_requests` 和 `analytics_snapshots`，不 ALTER 原业务表。随后执行 `python -m scripts.migrate_ui_indexes --execute`，为投影分页和原商品的最近详情查询补充两个覆盖索引。009 使用在线索引 DDL，不修改列和业务行；重复执行会跳过已有索引。对应 SQL 为 [008_analytics_read_models.sql](../migrations/008_analytics_read_models.sql) 和 [009_ui_read_indexes.sql](../migrations/009_ui_read_indexes.sql)。完整模式快照已同步注册模型。
 
 若检查发现原有功能的表结构差异，先完成对应版本的既有迁移；008 不会修复这些差异。刷新表使用独立的待处理索引，已完成的商品不会在每轮领取时被全表扫描。
 
@@ -56,7 +56,7 @@ $env:ANALYTICS_CONCURRENCY='1'
 
 当前 API 与后台使用原生异步数据库入口，SQL 会话预算在连接归还前恢复。每批最多领取 8 个商品，批量预取店铺、图片、SKU 和历史事实；所有成员通过租约校验后一起发布。刷新期间到达的新修订仍保留待处理状态，失败批次中的成员分别重试。统计/报告共享租约，失去租约的旧执行者不能发布。
 
-刷新队列使用 READ COMMITTED 和待处理索引，统计来源使用独立的 REPEATABLE READ 视图。统计每次读取 512 条必要字段，不传输图片链接等无关大字段，也不创建完整投影 ORM 对象。相同筛选下的 24 小时、7 天和 30 天统计在同一读取视图内共用一次商品聚合，再分别计算事件窗口。商品列表的最近观察时间和 ID 同向排序，允许 MySQL 沿现有索引反向读取第一页。
+刷新队列使用 READ COMMITTED 和待处理索引，统计来源使用独立的 REPEATABLE READ 视图。统计沿主键每次读取 512 条必要字段，不传输图片链接等无关大字段，也不创建完整投影 ORM 对象。相同筛选下的 24 小时、7 天和 30 天统计在同一读取视图内共用一次商品聚合，再分别计算事件窗口。商品列表先从覆盖索引选出一页 ID，再读取该页 JSON；最近观察时间和 ID 同向排序，其他排序也不携带全表 JSON 参与排序。
 
 商品投影持续增量更新，市场、工作台和商品覆盖率摘要的刷新间隔为 300 秒；事件统计为 30 秒，任务数量为 15 秒。后台总预算通过 `ANALYTICS_BUILD_BUDGET_SECONDS` 配置，默认 300 秒。页面和商品投影的单条 SELECT 限制为 3 秒，后台统计为 30 秒；连接归还前恢复原设置。首次回填临时使用最多 1 核 CPU，正式切换后恢复 0.5 核。现有 Redis 的用途和淘汰策略不变。
 

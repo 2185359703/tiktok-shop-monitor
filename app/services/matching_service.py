@@ -307,7 +307,8 @@ def candidate_matches(session, settings, *, product_id=None, limit=20):
     """Bounded recent-detail scan; counts are explicitly sample counts, not full-market totals."""
     anchor = require_product(session, settings, product_id) if product_id is not None else None
     query = select(Product).where(*market_scope(Product, settings), Product.title.is_not(None), Product.last_success_at.is_not(None))
-    total = session.scalar(select(func.count()).select_from(Product).where(*market_scope(Product, settings), Product.title.is_not(None), Product.last_success_at.is_not(None))) or 0
+    query = query.with_hint(Product, "FORCE INDEX (ix_products_recent_detail)", dialect_name="mysql")
+    total = session.scalar(query.with_only_columns(func.count())) or 0
     if anchor is not None:
         query = query.where(Product.id != anchor.id)
     products = session.scalars(query.order_by(Product.last_success_at.desc(), Product.id.desc()).limit(CANDIDATE_SCAN_LIMIT)).all()

@@ -181,3 +181,21 @@ def test_bulk_backfill_coalesces_pending_jobs_without_losing_revisions_or_retry_
     assert pending.requested_revision == 7 and pending.completed_revision == 4 and pending.available_at == retry_time
     assert pending.lease_token == "00000000-0000-0000-0000-000000000001"
     assert session.get(Job, (2, kind, key_for(kind, third))).requested_revision == 1
+
+
+def test_ui_access_indexes_migrate_once_without_changing_columns(mysql_engine):
+    from sqlalchemy import inspect
+    from scripts.migrate_ui_indexes import INDEXES, migrate
+    def columns():
+        inspector = inspect(mysql_engine)
+        return {index.table.name: [(column["name"], str(column["type"]), column["nullable"])
+            for column in inspector.get_columns(index.table.name)] for index in INDEXES}
+    before = columns()
+    with mysql_engine.connect() as connection:
+        for index in INDEXES:
+            connection.exec_driver_sql(f"ALTER TABLE `{index.table.name}` DROP INDEX `{index.name}`")
+    assert migrate(mysql_engine)["pending_statements"] == 2
+    result = migrate(mysql_engine, execute=True)
+    assert result == {"ready": True, "executed_statements": 2, "pending_statements": 0, "data_rows_modified": 0}
+    assert columns() == before
+    assert migrate(mysql_engine, execute=True)["executed_statements"] == 0
