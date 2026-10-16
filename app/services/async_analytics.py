@@ -2,6 +2,7 @@
 
 import asyncio
 import logging
+import re
 
 from app.services.analytics_runtime import source_reader
 from app.services.analytics_projection import build_event, build_products, publish_event, publish_product
@@ -52,6 +53,7 @@ class AsyncAnalyticsRunner:
             return await self.database.call(self.build, leases)
         preparation = asyncio.create_task(prepare())
         renewal = asyncio.create_task(self.renew(leases))
+        phase = "prepare"
         try:
             done, _ = await asyncio.wait({preparation, renewal}, return_when=asyncio.FIRST_COMPLETED)
             if renewal in done:
@@ -59,12 +61,15 @@ class AsyncAnalyticsRunner:
             publish = await preparation
             renewal.cancel()
             await asyncio.gather(renewal, return_exceptions=True)
+            phase = "publish"
             await self.database.transaction(complete_batch, leases, publish)
         except Exception as error:
             args = getattr(getattr(error, "orig", None), "args", ())
             code = args[0] if args and isinstance(args[0], int) else None
-            logging.getLogger(__name__).warning("analytics_refresh_failed kind=%s error=%s database_code=%s",
-                                               lease.kind, type(error).__name__, code)
+            tables = sorted(set(re.findall(r"(?:FROM|JOIN|UPDATE|INTO)\s+([a-z_]+)",
+                                           getattr(error, "statement", "") or "", re.I)))
+            logging.getLogger(__name__).warning("analytics_refresh_failed kind=%s phase=%s error=%s database_code=%s tables=%s",
+                                               lease.kind, phase, type(error).__name__, code, tables)
             try:
                 await self.database.transaction(failed_batch, leases, error)
             except LeaseLost:
