@@ -5,7 +5,7 @@ import threading
 from contextlib import contextmanager, nullcontext
 from datetime import timedelta
 
-from sqlalchemy import delete, exists, func, inspect, select, text
+from sqlalchemy import delete, exists, func, inspect, select, text, true
 from sqlalchemy.orm import Session
 
 from app.models import ChangeEvent, Product
@@ -30,7 +30,7 @@ def backfill_batch(db, config, *, batch_size=64):
     if state.get("ready"):
         return True
     queued = db.scalar(select(func.count()).select_from(Job).where(Job.schema_version == VERSION,
-        Job.is_pending.is_(True), Job.kind.in_(("product_projection", "event_projection"))))
+        Job.is_pending == true(), Job.kind.in_(("product_projection", "event_projection"))))
     if queued >= 512:
         return False
     products = select(Product.id).where(Product.platform == config.platform, Product.region == config.region)
@@ -65,7 +65,7 @@ def backfill_batch(db, config, *, batch_size=64):
     for identifier in missing_events:
         enqueue(db, "event_projection", {"event_id": str(identifier)})
     pending = db.scalar(select(func.count()).select_from(Job).where(Job.schema_version == VERSION,
-        Job.kind.in_(("product_projection", "event_projection")), Job.is_pending.is_(True),
+        Job.kind.in_(("product_projection", "event_projection")), Job.is_pending == true(),
         Job.requested_revision > Job.completed_revision))
     state["ready"] = not missing and not missing_events and pending == 0
     row.parameters = state

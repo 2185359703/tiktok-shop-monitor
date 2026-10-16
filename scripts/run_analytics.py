@@ -16,7 +16,9 @@ from scripts.runtime_support import stop_signal, log_failure
 
 
 async def run(config, args):
-    database = AsyncDatabase(make_async_engine(config.database_url))
+    # Queue mutations need record locks, not repeatable-read gap locks over
+    # absent statistic keys. Source aggregation still owns its explicit RR view.
+    database = AsyncDatabase(make_async_engine(config.database_url).execution_options(isolation_level="READ COMMITTED"))
     try:
         if not await database.read(lambda db: tables_ready(db.connection())):
             raise ValueError("Run scripts.migrate_analytics --execute before enabling analytics.")

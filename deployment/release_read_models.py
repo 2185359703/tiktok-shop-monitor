@@ -151,6 +151,8 @@ class Release:
         environment = {"ANALYTICS_ENABLED": "1", "SETTINGS_FILE": runtime["target"]}
         services = {name: {"image": self.image, "environment": environment, "volumes": [runtime], "stop_grace_period": "300s"}
                     for name in ("worker", "scheduler", "collection")}
+        if not public:
+            services["collection"]["command"] = ["python", "-m", "scripts.run_collection", "--poll-seconds", "300"]
         analysis_env = {**environment, "DATABASE_URL": "${DATABASE_URL:?Set DATABASE_URL}", "ANALYTICS_CONCURRENCY": "1" if public else "4",
                         "DB_POOL_SIZE": "3", "DB_MAX_OVERFLOW": "1"}
         services["analytics"] = {"image": self.image, "command": ["python", "-m", "scripts.run_analytics"],
@@ -226,7 +228,7 @@ class Release:
                 raise ValueError("Default statistics are not ready")
         self.write_overlay(public=True)
         try:
-            self.up("api", "analytics")
+            self.up("worker", "scheduler", "collection", "api", "analytics")
             deadline = time.monotonic() + 90
             while time.monotonic() < deadline:
                 try:

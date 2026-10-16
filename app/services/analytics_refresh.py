@@ -9,7 +9,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from uuid import uuid4
 
-from sqlalchemy import case, event, func, or_, select
+from sqlalchemy import event, func, or_, select, true
 from sqlalchemy.orm import Session
 
 from app.models.analytics_read import AnalyticsRefreshRequest as Job, AnalyticsSnapshot
@@ -103,9 +103,14 @@ def clear_rolled_back_marks(session, previous_transaction):
 
 def invalidate_statistics(db, config):
     stamp = now(db)
-    rows = db.scalars(select(Job).where(Job.schema_version == VERSION, Job.kind.in_(STAT_KINDS),
-        Job.last_requested_at >= stamp - timedelta(days=1)).with_for_update()).all()
-    for row in rows:
+    keys = db.execute(select(Job.kind, Job.key_hash).where(Job.schema_version == VERSION, Job.kind.in_(STAT_KINDS),
+        Job.last_requested_at >= stamp - timedelta(days=1)).with_hint(
+            Job, "FORCE INDEX (ix_analytics_due)", dialect_name="mysql")).all()
+    for kind, key in keys:
+        row = db.scalar(select(Job).where(Job.schema_version == VERSION, Job.kind == kind, Job.key_hash == key)
+                        .with_for_update().execution_options(populate_existing=True))
+        if row is None:
+            continue
         if any(row.parameters.get(k) != v for k, v in scope(config).items()):
             continue
         if row.requested_revision == row.completed_revision:
@@ -120,8 +125,14 @@ def mark_market(db, platform, region, *, immediate=False):
     if not enabled(db):
         return
     stamp = now(db)
-    for row in db.scalars(select(Job).where(Job.schema_version == VERSION, Job.kind.in_(STAT_KINDS),
-        Job.parameters["platform"].as_string() == platform, Job.parameters["region"].as_string() == region).with_for_update()).all():
+    keys = db.execute(select(Job.kind, Job.key_hash).where(Job.schema_version == VERSION, Job.kind.in_(STAT_KINDS),
+        Job.parameters["platform"].as_string() == platform, Job.parameters["region"].as_string() == region).with_hint(
+            Job, "FORCE INDEX (ix_analytics_due)", dialect_name="mysql")).all()
+    for kind, key in keys:
+        row = db.scalar(select(Job).where(Job.schema_version == VERSION, Job.kind == kind, Job.key_hash == key)
+                        .with_for_update().execution_options(populate_existing=True))
+        if row is None:
+            continue
         if row.requested_revision == row.completed_revision:
             row.requested_revision += 1
             row.is_pending = True
@@ -199,14 +210,15 @@ def claim(db, config, *, prefer_statistics=False, slot_name="analysis_slot"):
         return None
     row = None
     for statistics in (prefer_statistics, not prefer_statistics):
-        query = select(Job).where(Job.schema_version == VERSION, Job.is_pending.is_(True),
+        query = select(Job).where(Job.schema_version == VERSION, Job.is_pending == true(),
             Job.requested_revision > Job.completed_revision, Job.available_at <= stamp,
             or_(Job.lease_until.is_(None), Job.lease_until <= stamp))
         if statistics:
             query = query.where(Job.kind.in_(STAT_KINDS), *(Job.parameters[k].as_string() == v for k, v in scope(config).items()))
         else:
             query = query.where(Job.kind.in_(("product_projection", "event_projection")))
-        row = db.scalar(query.order_by(Job.available_at, Job.key_hash).limit(1).with_for_update(skip_locked=True))
+        row = db.scalar(query.with_hint(Job, "FORCE INDEX (ix_analytics_pending)", dialect_name="mysql")
+                        .order_by(Job.available_at, Job.key_hash).limit(1).with_for_update(skip_locked=True))
         if row is not None:
             break
     if row is None:

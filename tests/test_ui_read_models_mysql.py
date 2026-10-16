@@ -118,3 +118,28 @@ def test_native_async_worker_publishes_without_sync_driver_io(mysql_engine, monk
         with sessionmaker(mysql_engine).begin() as db:
             db.execute(delete(AnalyticsSnapshot))
             db.execute(delete(AnalyticsRefreshRequest))
+
+
+def test_empty_statistics_invalidation_does_not_lock_new_projection_requests(mysql_engine):
+    from concurrent.futures import ThreadPoolExecutor
+    from sqlalchemy import delete
+    from app.models.analytics_read import AnalyticsRefreshRequest
+    from app.services.analytics_refresh import invalidate_statistics
+    factory = sessionmaker(mysql_engine)
+    try:
+        with factory.begin() as db:
+            enqueue(db, "product_projection", {"product_id": "10001"})
+        with factory.begin() as publisher:
+            invalidate_statistics(publisher, Settings())
+            def insert_next():
+                with factory.begin() as writer:
+                    writer.execute(text("SET SESSION innodb_lock_wait_timeout=1"))
+                    try:
+                        enqueue(writer, "product_projection", {"product_id": "10002"})
+                    finally:
+                        writer.execute(text("SET SESSION innodb_lock_wait_timeout=50"))
+            with ThreadPoolExecutor(max_workers=1) as executor:
+                executor.submit(insert_next).result(timeout=4)
+    finally:
+        with factory.begin() as db:
+            db.execute(delete(AnalyticsRefreshRequest))
