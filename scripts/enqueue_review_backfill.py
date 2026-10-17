@@ -7,7 +7,7 @@ import json
 from pathlib import Path
 import tomllib
 
-from sqlalchemy import String, cast, exists, select
+from sqlalchemy import String, cast, exists, or_, select
 
 from app.models import CrawlTask, Product, ResourceType, Shop, TaskType
 from app.services.product_reviews import enqueue_initial_review_tasks, reviews_available
@@ -35,7 +35,7 @@ def candidates(session, settings, shop_ids):
     rows = session.execute(select(Product.id, Product.shop_id).where(
         Product.platform == settings.platform, Product.region == settings.region,
         Product.shop_id.in_(shops), Product.last_success_at.is_not(None),
-        Product.review_count > 0, ~scheduled,
+        or_(Product.review_count.is_(None), Product.review_count > 0), ~scheduled,
     ).order_by(Product.id)).all()
     # Spread early results across shops instead of making a large shop consume
     # every slot before the other monitored shops receive any reviews.

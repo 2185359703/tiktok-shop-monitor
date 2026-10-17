@@ -43,7 +43,7 @@ def test_initial_reviews_are_idempotent_across_windows_and_failed_jobs(session):
     assert session.scalar(select(func.count()).select_from(CrawlTask)) == 1
 
 
-@pytest.mark.parametrize("values", [{"review_count": 0}, {"review_count": None}, {"last_success_at": None}])
+@pytest.mark.parametrize("values", [{"review_count": 0}, {"last_success_at": None}])
 def test_only_observed_products_with_source_reviews_are_scheduled(session, values):
     row = product(session, **values)
     assert ensure_initial_review_task(session, CONFIG, row.id) == (None, False)
@@ -53,6 +53,13 @@ def test_only_observed_products_with_source_reviews_are_scheduled(session, value
 def test_disabled_handler_does_not_create_work(session):
     row = product(session)
     assert ensure_initial_review_task(session, Settings(), row.id) == (None, False)
+
+
+def test_unknown_source_count_does_not_mean_no_comments(session):
+    row = product(session, review_count=None)
+    assert candidates(session, CONFIG, ["100"]) == [row.id]
+    task, created = ensure_initial_review_task(session, CONFIG, row.id)
+    assert created and task.payload["max_pages"] == 1
 
 
 def test_existing_manual_work_is_not_duplicated_and_rollback_is_atomic(session):
@@ -91,8 +98,8 @@ def test_batch_skips_unobserved_resources_and_preserves_transaction_boundary(ses
     first = product(session)
     unknown = product(session, session.get(Shop, first.shop_id), review_count=None)
     with session.begin_nested() as savepoint:
-        assert enqueue_batch(session, CONFIG, [first.id, unknown.id, first.id]) == 1
-        task = session.scalar(select(CrawlTask))
+        assert enqueue_batch(session, CONFIG, [first.id, unknown.id, first.id]) == 2
+        task = session.scalar(select(CrawlTask).where(CrawlTask.resource_id == str(first.id)))
         assert task.payload["root_task_id"] == task.task_id
         assert task.payload["max_pages"] == 1 and task.resource_id == str(first.id)
         savepoint.rollback()
