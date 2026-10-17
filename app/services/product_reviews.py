@@ -3,7 +3,7 @@
 from dataclasses import asdict
 from uuid import UUID, uuid4
 
-from sqlalchemy import inspect, select
+from sqlalchemy import inspect, insert, select
 
 from app.crawlers.product_list import product_id_from_url
 from app.crawlers.product_reviews import REVIEW_SOURCE_VERSION
@@ -18,7 +18,9 @@ def reviews_available(session):
     return inspect(session.connection()).has_table(ProductReview.__tablename__)
 
 
-def ensure_review_task(session, settings, product_id, *, max_pages=None):
+def ensure_review_task(session, settings, product_id, *, max_pages=None, initial_only=False):
+    if initial_only and TaskType.PRODUCT_REVIEWS not in settings.enabled_task_types:
+        return None, False
     max_pages = settings.review_max_pages if max_pages is None else max_pages
     if type(max_pages) is not int or not 1 <= max_pages <= 500:
         raise ValueError("评论页数必须为1至500的整数。")
@@ -26,28 +28,93 @@ def ensure_review_task(session, settings, product_id, *, max_pages=None):
         Product.platform == settings.platform, Product.region == settings.region).with_for_update())
     if product is None:
         raise ValueError("product_not_found")
+    if initial_only:
+        if product.last_success_at is None or not product.review_count:
+            return None, False
+        # The product lock serializes this check with manual collection and
+        # other detail workers. Do not reopen an exhausted initial collection
+        # on each later detail observation; explicit retries remain available.
+        previous = session.scalar(select(CrawlTask).where(
+            CrawlTask.platform == product.platform, CrawlTask.region == product.region,
+            CrawlTask.task_type == TaskType.PRODUCT_REVIEWS,
+            CrawlTask.resource_type == ResourceType.PRODUCT, CrawlTask.resource_id == str(product.id),
+        ).order_by(CrawlTask.id.desc()).limit(1).with_for_update())
+        if previous is not None:
+            return previous, False
     shop = session.get(Shop, product.shop_id)
     if (shop is None or shop.platform != product.platform or shop.region != product.region
             or product_id_from_url(product.product_url) != product.platform_product_id):
         raise ValueError("invalid_review_product")
-    now = database_now(session)
+    values = _review_task_values(product, shop, database_now(session), max_pages)
+    previous = session.scalar(select(CrawlTask).where(
+        CrawlTask.idempotency_key == values["idempotency_key"]).with_for_update())
+    if previous:
+        return previous, False
+    task = CrawlTask(**values)
+    session.add(task)
+    session.flush()
+    return task, True
+
+
+def _review_task_values(product, shop, now, max_pages):
     window = utc_window(now, 3600)
     key = fingerprint({"type": "product_reviews", "product": product.id, "window": window.isoformat(),
                        "source_version": REVIEW_SOURCE_VERSION, "max_pages": max_pages})
-    previous = session.scalar(select(CrawlTask).where(CrawlTask.idempotency_key == key))
-    if previous:
-        return previous, False
     task_id = str(uuid4())
-    task = CrawlTask(task_id=task_id, platform=product.platform, region=product.region,
+    return dict(task_id=task_id, platform=product.platform, region=product.region,
         task_type=TaskType.PRODUCT_REVIEWS, resource_type=ResourceType.PRODUCT, resource_id=str(product.id),
         idempotency_key=key, priority=3, scheduled_for=window, available_at=now,
         payload={"product_id": str(product.id), "platform_product_id": product.platform_product_id,
                  "platform_shop_id": shop.platform_shop_id, "product_url": product.product_url,
                  "root_task_id": task_id, "page_number": 1, "page_size": 5, "max_pages": max_pages,
                  "source_version": REVIEW_SOURCE_VERSION, "seen_page_hashes": []})
-    session.add(task)
-    session.flush()
-    return task, True
+
+
+def ensure_initial_review_task(session, settings, product_id):
+    """Collect the public document once; API pagination remains an explicit job.
+
+    Anonymous pagination is currently unavailable. A one-page budget keeps the
+    real public comments and preserves `complete=False` when the source has more.
+    """
+    return ensure_review_task(session, settings, product_id, max_pages=1, initial_only=True)
+
+
+def enqueue_initial_review_tasks(session, settings, product_ids):
+    """Create a bounded batch with shared lookups and one bulk INSERT.
+
+    Lock products in ID order, then use a current read for existing work. This
+    serializes with manual requests and detail workers even under REPEATABLE READ.
+    """
+    if TaskType.PRODUCT_REVIEWS not in settings.enabled_task_types or not product_ids:
+        return 0
+    if len(product_ids) > 100 or any(type(value) is not int or value <= 0 for value in product_ids):
+        raise ValueError("invalid_review_batch")
+    ids = list(dict.fromkeys(product_ids))
+    products = {row.id: row for row in session.scalars(select(Product).where(
+        Product.id.in_(ids), Product.platform == settings.platform, Product.region == settings.region,
+    ).order_by(Product.id).with_for_update().execution_options(populate_existing=True))}
+    if len(products) != len(ids):
+        raise ValueError("product_not_found")
+    existing = set(session.scalars(select(CrawlTask.resource_id).where(
+        CrawlTask.platform == settings.platform, CrawlTask.region == settings.region,
+        CrawlTask.task_type == TaskType.PRODUCT_REVIEWS, CrawlTask.resource_type == ResourceType.PRODUCT,
+        CrawlTask.resource_id.in_([str(value) for value in ids]),
+    ).with_for_update()))
+    shops = {row.id: row for row in session.scalars(select(Shop).where(
+        Shop.id.in_({row.shop_id for row in products.values()})))}
+    now, values = database_now(session), []
+    for product_id in ids:
+        product = products[product_id]
+        if str(product_id) in existing or product.last_success_at is None or not product.review_count:
+            continue
+        shop = shops.get(product.shop_id)
+        if (shop is None or shop.platform != product.platform or shop.region != product.region
+                or product_id_from_url(product.product_url) != product.platform_product_id):
+            raise ValueError("invalid_review_product")
+        values.append(_review_task_values(product, shop, now, 1))
+    if values:
+        session.execute(insert(CrawlTask), values)
+    return len(values)
 
 
 def validate_review_payload(lease):

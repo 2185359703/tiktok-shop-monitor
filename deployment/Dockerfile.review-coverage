@@ -1,0 +1,8 @@
+ARG BASE_IMAGE
+FROM ${BASE_IMAGE}
+ARG REVISION
+LABEL org.opencontainers.image.revision=${REVISION}
+COPY --chown=monitor:monitor app/services/product_reviews.py app/services/product_reviews.py
+COPY --chown=monitor:monitor app/workers/async_handlers.py app/workers/async_handlers.py
+COPY --chown=monitor:monitor app/workers/handlers.py app/workers/handlers.py
+COPY --chown=monitor:monitor scripts/enqueue_review_backfill.py scripts/enqueue_review_backfill.py
