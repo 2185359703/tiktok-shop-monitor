@@ -1,0 +1,48 @@
+"""Add durable collection plans, controls and audit without rewriting source data."""
+
+import argparse
+import json
+
+from sqlalchemy import inspect
+
+from app.models import Base
+from app.models.collection import COLLECTION_TABLE_NAMES
+from app.storage.database import make_engine
+from app.storage.schema import model_tables, mysql_ddl, require_supported_server, schema_drift
+
+
+def additive_sql():
+    sql = mysql_ddl(table_names=COLLECTION_TABLE_NAMES)
+    return "-- Durable collection management. Apply with scripts.migrate_collection_management.\nSET NAMES utf8mb4;\nSET time_zone = '+00:00';\n\n" + sql[sql.index("CREATE TABLE IF NOT EXISTS "):]
+
+
+def main(argv=None):
+    parser = argparse.ArgumentParser(description=__doc__)
+    modes = parser.add_mutually_exclusive_group()
+    modes.add_argument("--execute", action="store_true")
+    modes.add_argument("--check", action="store_true")
+    args = parser.parse_args(argv)
+    if not args.execute and not args.check:
+        print(additive_sql(), end="")
+        return 0
+    engine = make_engine()
+    try:
+        require_supported_server(engine)
+        existing = set(inspect(engine).get_table_names())
+        if not {"crawl_tasks", "crawl_attempts", "shops", "products"}.issubset(existing):
+            raise ValueError("The existing collection schema is required.")
+        if args.execute:
+            Base.metadata.create_all(engine, tables=model_tables(COLLECTION_TABLE_NAMES), checkfirst=True)
+        existing = set(inspect(engine).get_table_names())
+        # Other additive migrations may be applied in the same release. Check
+        # only this migration's tables, without rejecting their pending indexes.
+        drift = [item for item in schema_drift(engine) if any(name in item for name in COLLECTION_TABLE_NAMES)]
+        ready = set(COLLECTION_TABLE_NAMES).issubset(existing) and not drift
+        print(json.dumps({"ready": ready, "source_table_alterations": 0}))
+        return 0 if ready else 1
+    finally:
+        engine.dispose()
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

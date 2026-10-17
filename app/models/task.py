@@ -81,6 +81,7 @@ class CrawlAttempt(PrimaryKeyMixin, CreatedAtMixin, Base):
     __table_args__ = (
         UniqueConstraint("task_id", "attempt_no", name="uq_crawl_attempts_number"),
         Index("ix_crawl_attempts_finished", "finished_at", "error_type"),
+        Index("ix_crawl_attempts_monitor", "finished_at", "id", "task_id"),
         CheckConstraint("attempt_no >= 1", name="attempt_no"),
         CheckConstraint(
             "response_status IS NULL OR (response_status >= 100 AND response_status <= 599)",

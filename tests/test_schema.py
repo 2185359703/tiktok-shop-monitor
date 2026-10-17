@@ -9,6 +9,7 @@ from sqlalchemy.orm import configure_mappers
 from app.models import Base, MatchStatus, ProductImage, ProductMatch, ProductContent, ProductReview, ShopProfileSnapshot, SkuMatch
 from app.models.base import UTCDateTime
 from app.models.analytics_read import ANALYTICS_TABLE_NAMES, ROLLUP_TABLE_NAMES
+from app.models.collection import COLLECTION_TABLE_NAMES
 from app.storage.schema import INITIAL_TABLE_NAMES, WORKBENCH_TABLE_NAMES, model_tables, mysql_comments_ddl, mysql_ddl, validate_database_name
 
 
@@ -30,8 +31,8 @@ def test_historical_ten_table_ddl_is_preserved():
 
 
 def test_current_schema_matches_registered_models():
-    assert len(Base.metadata.tables) == 22
-    assert set(Base.metadata.tables) == set(INITIAL_TABLE_NAMES) | set(WORKBENCH_TABLE_NAMES) | set(ANALYTICS_TABLE_NAMES) | set(ROLLUP_TABLE_NAMES) | {ProductContent.__tablename__, ShopProfileSnapshot.__tablename__, ProductReview.__tablename__}
+    assert len(Base.metadata.tables) == 27
+    assert set(Base.metadata.tables) == set(INITIAL_TABLE_NAMES) | set(WORKBENCH_TABLE_NAMES) | set(ANALYTICS_TABLE_NAMES) | set(ROLLUP_TABLE_NAMES) | set(COLLECTION_TABLE_NAMES) | {ProductContent.__tablename__, ShopProfileSnapshot.__tablename__, ProductReview.__tablename__}
     assert (MIGRATIONS / "current_schema.sql").read_text(encoding="utf-8") == mysql_ddl()
     assert (ProductImage.__tablename__, ProductMatch.__tablename__, SkuMatch.__tablename__) == WORKBENCH_TABLE_NAMES
     assert MatchStatus.CONFIRMED.value == "confirmed"
@@ -42,6 +43,8 @@ def test_ui_index_migration_matches_models():
     assert (MIGRATIONS / "009_ui_read_indexes.sql").read_text(encoding="utf-8") == additive_sql()
     from scripts.migrate_recent_index import additive_sql as recent_sql
     assert (MIGRATIONS / "011_ui_recent_index.sql").read_text(encoding="utf-8") == recent_sql()
+    from scripts.migrate_collection_monitor_indexes import additive_sql as monitor_sql
+    assert (MIGRATIONS / "013_collection_monitor_indexes.sql").read_text(encoding="utf-8") == monitor_sql()
 
 
 def test_all_tables_and_columns_have_chinese_comments():
@@ -65,6 +68,7 @@ def test_comment_migration_matches_models():
     ("005_product_contents.sql", ("product_contents",)),
     ("008_analytics_read_models.sql", ANALYTICS_TABLE_NAMES),
     ("010_analytics_rollups.sql", ROLLUP_TABLE_NAMES),
+    ("012_collection_management.sql", COLLECTION_TABLE_NAMES),
 ])
 def test_additive_migration_table_and_index_definitions_match_models(filename, names):
     saved = (MIGRATIONS / filename).read_text(encoding="utf-8")

@@ -21,6 +21,18 @@ from pathlib import Path
 
 SERVICES = ("api", "worker", "scheduler", "collection")
 ANALYTICS_SERVICES = ("analytics", "analytics-summaries", "analytics-heavy")
+UPGRADE_MIGRATIONS = ("scripts.migrate_analytics_rollups", "scripts.migrate_recent_index",
+                      "scripts.migrate_collection_management", "scripts.migrate_collection_monitor_indexes")
+
+
+def upgrade_role_ready(name, items):
+    """A completed fixed batch is healthy; persistent runtime roles must be live."""
+    return bool(items) and all(
+        item["State"]["Running"] or (
+            name == "collection" and item["State"].get("Status") == "exited"
+            and item["State"].get("ExitCode") == 0 and not item["State"].get("OOMKilled", False)
+        ) for item in items
+    )
 
 
 class Release:
@@ -189,8 +201,8 @@ class Release:
         for name in ANALYTICS_SERVICES[1:]:
             if items := self.containers(name):
                 previous[name] = items
-        if any(not items or not all(item["State"]["Running"] for item in items) for items in previous.values()):
-            raise ValueError("All existing application roles must be running")
+        if any(not upgrade_role_ready(name, items) for name, items in previous.items()):
+            raise ValueError("Runtime roles must be running; a fixed collection batch may have exited successfully")
         if len(previous["worker"]) != 2 or len({item["Image"] for items in previous.values() for item in items}) != 1:
             raise ValueError("Application roles must have one consistent release and two workers")
         saved_overlay = self.evidence / "previous-live-overlay.json"
@@ -204,7 +216,7 @@ class Release:
         self.save("upgrade_prepared", base_files=[str(path) for path in self.base_files],
             previous_images={name: [item["Config"]["Image"] for item in items] for name, items in previous.items()},
             previous_public_overlay=str(saved_overlay), preserved_runtime=preserved)
-        for module in ("scripts.migrate_analytics_rollups", "scripts.migrate_recent_index"):
+        for module in UPGRADE_MIGRATIONS:
             self.run(["docker", "run", "--rm", "--network", networks[0], "--env-file", str(self.root / "deployment.env"),
                 self.image, "python", "-m", module, "--execute"], timeout=90)
         self.write_overlay(public=False)
@@ -236,7 +248,7 @@ class Release:
             self.stop_sources()
             backup = self.backup_schema_and_control(mysql)
             self.save("backed_up", **backup)
-            for module in ("scripts.migrate_shop_profiles", "scripts.migrate_product_reviews", "scripts.migrate_analytics", "scripts.migrate_ui_indexes", "scripts.migrate_analytics_rollups", "scripts.migrate_recent_index"):
+            for module in ("scripts.migrate_shop_profiles", "scripts.migrate_product_reviews", "scripts.migrate_analytics", "scripts.migrate_ui_indexes", *UPGRADE_MIGRATIONS):
                 result = self.run(["docker", "run", "--rm", "--network", networks[0], "--env-file", str(self.root / "deployment.env"),
                                   "--env", "ANALYTICS_ENABLED=0", self.image, "python", "-m", module, "--execute"])
                 self.save("migrating", migration=module, result=json.loads(result))
@@ -254,6 +266,38 @@ class Release:
             raise ValueError("Analytics service has not been started")
         result = json.loads(self.run(["docker", "exec", candidates[0], "python", "-m", "scripts.analytics_status"]))
         print(json.dumps(result, ensure_ascii=False), flush=True)
+
+    def check_collection_candidate(self):
+        """Verify new read paths before touching the public overlay or writers."""
+        control = self.read("/api/v1/collection-management/control", port=18081, timeout=15)
+        if not (isinstance(control, dict) and type(control.get("paused")) is bool
+                and type(control.get("writes_enabled")) is bool
+                and isinstance(control.get("platform"), str) and isinstance(control.get("region"), str)
+                and isinstance(control.get("supported_task_types"), list)
+                and isinstance(control.get("enabled_task_types"), list)
+                and isinstance(control.get("limits"), dict)):
+            raise ValueError("Candidate collection control response is invalid")
+        for resource in ("plans", "audit"):
+            page = self.read(f"/api/v1/collection-management/{resource}?limit=1", port=18081, timeout=15)
+            if not (isinstance(page, dict) and isinstance(page.get("items"), list)
+                    and "next_before_id" in page and (page["next_before_id"] is None
+                    or isinstance(page["next_before_id"], str))):
+                raise ValueError(f"Candidate collection {resource} response is invalid")
+        monitor = self.read("/api/v1/collections/monitor?window_minutes=60", port=18081, timeout=15)
+        if not (isinstance(monitor, dict) and isinstance(monitor.get("generated_at"), str)
+                and all(isinstance(monitor.get(key), dict) for key in ("scope", "window", "queue", "attempts", "leases", "runtime"))
+                and all(isinstance(monitor.get(key), list) for key in ("trend", "errors", "recent_failures", "alerts"))):
+            raise ValueError("Candidate collection monitor response is invalid")
+        if not (monitor["window"].get("minutes") == 60
+                and monitor["scope"] == {key: control[key] for key in ("platform", "region")}
+                and monitor["queue"].get("status") in {"fresh", "stale", "pending"}
+                and type(monitor["attempts"].get("total")) is int
+                and isinstance(monitor["leases"].get("items"), list)
+                and monitor["runtime"].get("status") in {"available", "unavailable", "not_configured"}
+                and isinstance(monitor["runtime"].get("components"), list)):
+            raise ValueError("Candidate collection monitor response is invalid")
+        # Existing writers still use the previous image here. Absence of the new
+        # heartbeat is expected until cutover; this check never creates work.
 
     def cutover(self):
         if self.record.get("phase") not in {"warming", "live"}:
@@ -273,6 +317,7 @@ class Release:
             result = self.read(path, port=18081, timeout=15)
             if result.get("_meta", {}).get("status") == "pending":
                 raise ValueError("Default statistics are not ready")
+        self.check_collection_candidate()
         self.write_overlay(public=True)
         try:
             self.up("worker", "scheduler", "collection", "api", *ANALYTICS_SERVICES)

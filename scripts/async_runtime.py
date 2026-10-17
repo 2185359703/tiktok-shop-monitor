@@ -75,23 +75,30 @@ async def consume(settings, worker, broker, stop, *, once=False):
         await asyncio.gather(*tuple(active), return_exceptions=True)
 
 
-async def worker_loop(settings, database, registry, metrics, stop, *, once=False):
+async def worker_loop(settings, database, registry, metrics, stop, *, once=False, worker_id=None, runtime_status=None):
+    runtime_status = runtime_status if runtime_status is not None else {}
     if not settings.enabled_task_types:
+        runtime_status["state"] = "disabled"
         while not stop.is_set() and not once:
             await asyncio.sleep(.2)
         return 0
     settings.require_infrastructure()
     gate = AsyncRedisGate(settings)
-    worker = AsyncWorker(settings, database, registry, gate, f"{socket.gethostname()}:{uuid4().hex[:12]}"[:128], metrics)
+    worker = AsyncWorker(settings, database, registry, gate,
+                         worker_id or f"{socket.gethostname()}:{uuid4().hex[:12]}"[:128], metrics)
     try:
         while not stop.is_set():
             broker = AsyncRabbitMQ(settings)
             try:
+                runtime_status["state"] = "connecting"
                 await broker.connect()
+                runtime_status["state"] = "running"
                 ok = await consume(settings, worker, broker, stop, once=once)
+                runtime_status["state"] = "draining" if stop.is_set() else "reconnecting"
                 if once:
                     return 0 if ok else 1
             except Exception as error:
+                runtime_status["state"] = "reconnecting"
                 logging.getLogger(__name__).error("worker_retry_connection", extra={"error_type": type(error).__name__})
                 if once:
                     return 1
@@ -100,4 +107,5 @@ async def worker_loop(settings, database, registry, metrics, stop, *, once=False
             await pause_until_stop(stop, settings.poll_seconds)
         return 0
     finally:
+        runtime_status["state"] = "stopped"
         await gate.close()

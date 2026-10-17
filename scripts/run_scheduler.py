@@ -2,6 +2,7 @@ import argparse
 import asyncio
 import json
 import logging
+from datetime import datetime, timezone
 
 from app.observability.logging import configure_logging
 from app.observability.metrics import Metrics
@@ -9,6 +10,7 @@ from app.queue.async_broker import AsyncRabbitMQ
 from app.queue.async_redis_gate import AsyncRedisGate
 from app.services.async_scheduler import AsyncScheduler
 from app.services.scheduler import task_counts
+from app.services.collection_heartbeat import RuntimeHeartbeat, instance_id
 from app.settings import Settings
 from app.storage.async_database import AsyncDatabase, make_async_engine
 from app.workers.async_handlers import async_handler_registry
@@ -21,6 +23,8 @@ async def run(settings, args):
     database = AsyncDatabase(make_async_engine(settings.database_url))
     broker = gate = server = None
     metrics = Metrics()
+    runtime_status = {"state": "starting"}
+    heartbeat = RuntimeHeartbeat(settings, "scheduler", instance_id(), runtime_status)
     try:
         if args.dry_run:
             counts = await database.read(task_counts, settings)
@@ -33,17 +37,22 @@ async def run(settings, args):
         stop = stop_signal()
         if not args.once:
             server, _ = start_metrics(metrics, settings.scheduler_metrics_port, settings.host)
+            heartbeat.start()
         while not stop.is_set():
             try:
                 if not broker.connected:
+                    runtime_status["state"] = "connecting"
                     await broker.connect()
                 result = await scheduler.dispatch_once()
+                runtime_status.update(state="running", last_success_at=datetime.now(timezone.utc).isoformat(),
+                                      published=result["published"], recovered=result["recovered"])
                 logging.getLogger(__name__).info("scheduler_tick", extra={"count": result["published"]})
                 if args.once:
                     print(json.dumps(result))
                     return 0
                 await pause_until_stop(stop, settings.poll_seconds)
             except Exception as error:
+                runtime_status["state"] = "degraded"
                 log_failure("scheduler_retry_connection", error)
                 await broker.close()
                 if args.once:
@@ -51,6 +60,7 @@ async def run(settings, args):
                 await pause_until_stop(stop, settings.poll_seconds)
         return 0
     finally:
+        await heartbeat.close()
         if server:
             await asyncio.to_thread(server.shutdown)
             server.server_close()

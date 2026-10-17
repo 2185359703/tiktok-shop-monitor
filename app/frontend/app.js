@@ -8,6 +8,7 @@ import { renderMatching, renderMatchForm, renderMatchingAuth, renderReviewMatch 
 import { renderProductInspector, renderProductPanel, renderCatalogState, skuCount } from './product-detail.js';
 import { installScatterInteractions } from './scatter-chart.js';
 import { installShopPicker } from './shop-picker.js';
+import { createCollectionWorkspace } from './collection-ui.js';
 
 const paths = {
   bag:'M5 7h14l-1 13H6L5 7ZM9 7V5a3 3 0 0 1 6 0v2',
@@ -50,6 +51,8 @@ const meta = {
   products:['商品监测','筛选商品、核对公开报价，追踪每一次实际观察。','PRODUCT MONITORING'],
   events:['变化事件','定位价格、库存和规格变化，核对前后观察。','CHANGE EVENTS'],
   tasks:['采集任务','执行状态、重试与采集进度。','COLLECTION TASKS'],
+  collections:['采集管理','配置采集范围与执行安排，管理任务和运行历史。','COLLECTION MANAGEMENT'],
+  'collection-monitor':['采集监控','查看采集吞吐、运行心跳与需要处理的异常。','COLLECTION MONITORING'],
   reports:['监测报告','查看窗口内统计，下载与归档你的市场观察。','MONITORING REPORTS'],
 };
 const state = {
@@ -71,6 +74,8 @@ let wbController,matchingController,productsController,wbQueryTimer,matchToken='
 let catalogView=null,productDetail=null,drillRequestVersion=0;
 const pageQueries=createQueryCache(request);
 async function write(path,body,options){const data=await writeRequest(path,body,options);pageQueries.invalidate();workbenchCache.clear();return data;}
+const collectionWorkspace=createCollectionWorkspace({request,write,getPage:()=>state.page,render:()=>{updateConnection();render();},toast,openDialog,closeDialog,openTask,icon});
+const isCollectionPage=()=>['collections','collection-monitor'].includes(state.page);
 let eventsController,productStatsController,productQueryTimer;
 async function pageRead(path,{signal,onData,force=false,maxAge=15000}={}){
   const cached=pageQueries.peek(path);
@@ -91,6 +96,14 @@ function snapshotConnectionLabel(data,readyLabel='数据已连接'){
   return `${data._meta.expired?'上次结果已过期':'上次结果'} · ${data._meta.refresh_state==='failed'?'等待重试':'后台更新中'}`;
 }
 function updateConnection(){
+  if(isCollectionPage()){
+    const connection=collectionWorkspace.connection();
+    $('connection-label').textContent=connection.stale?'上次结果 · 连接待恢复':connection.loaded?'采集服务已连接':connection.loading?'正在读取采集状态':'等待采集数据';
+    $('connection-dot').className=`status-dot ${connection.loaded&&!connection.stale?'online':'offline'}`;
+    $('last-updated').textContent=connection.updatedAt?`${state.page==='collection-monitor'?'采样于':'配置更新于'} ${formatDate(connection.updatedAt)}`:'';
+    $('system-dot').className=`status-dot ${state.capabilities?'online':'offline'}`;
+    return;
+  }
   const data={workbench:wbState.data,overview:state.report,shops:state.report,products:state.productStats,
     matches:matchingState.tab==='candidates'?matchingState.candidates:null,events:state.eventStats,
     tasks:state.taskStats,reports:state.reportArchive}[state.page];
@@ -260,19 +273,23 @@ function render() {
 function renderNow() {
   const active=document.activeElement, activeId=active?.id, pos=active?.selectionStart;
   const activeAction=active?.dataset.action,activeValue=active?.dataset.value,activeItem=active?.dataset.id,activeColumn=active?.dataset.column;
+  const activeCollectionAction=active?.dataset.collectionAction;
   if(state.page==='products')state.columnsOpen=document.querySelector('.column-settings')?.open??state.columnsOpen;
   const [title,desc,eyebrow]=meta[state.page];$('page-title').textContent=title;$('breadcrumb').textContent=title;$('page-description').textContent=desc;$('eyebrow').textContent=eyebrow;
   document.title=`${title} · ShopScope`;
   document.body.dataset.view=state.page;
   if(state.page==='workbench'){if(wbState.loading&&!wbState.data){$('connection-label').textContent='正在读取筛选数据';$('last-updated').textContent='';}else if(wbState.error&&!wbState.data){$('connection-label').textContent='筛选数据暂不可用';$('last-updated').textContent='';}else if(wbState.data&&!wbState.error){$('connection-label').textContent=snapshotConnectionLabel(wbState.data,'分析数据已连接');$('last-updated').textContent=`分析更新于 ${formatDate(wbState.data.generated_at)}`;$('connection-dot').className='status-dot online';}}
   document.querySelectorAll('[data-page]').forEach(a=>{const selected=a.dataset.page===state.page;a.classList.toggle('active',selected);if(selected)a.setAttribute('aria-current','page');else a.removeAttribute('aria-current');});
-  $('window-select').hidden=['shops','tasks'].includes(state.page);
-  $('page-content').setAttribute('aria-busy',String(state.page==='workbench'?wbState.loading:state.loading));
-  const view={workbench:()=>renderWorkbench(wbState,{shops:state.shops,icon}),matches:()=>renderMatching(matchingState,state.capabilities||{}),overview:renderOverview,shops:renderShops,products:renderProducts,events:renderEvents,tasks:renderTasks,reports:renderReports};
-  $('page-content').innerHTML=state.initializing?loading():`<div class="page-enter">${view[state.page]()}</div>`;
+  $('window-select').hidden=['shops','tasks','collections','collection-monitor'].includes(state.page);
+  document.querySelector('.strip-source').textContent=isCollectionPage()?'来源采集 · 运行记录':'公开价格 · 已采集样本';
+  $('page-content').setAttribute('aria-busy',String(isCollectionPage()?collectionWorkspace.connection().loading:state.page==='workbench'?wbState.loading:state.loading));
+  const view={workbench:()=>renderWorkbench(wbState,{shops:state.shops,icon}),matches:()=>renderMatching(matchingState,state.capabilities||{}),overview:renderOverview,shops:renderShops,products:renderProducts,events:renderEvents,tasks:renderTasks,reports:renderReports,collections:()=>collectionWorkspace.render('collections'),'collection-monitor':()=>collectionWorkspace.render('collection-monitor')};
+  $('page-content').innerHTML=state.initializing&&!isCollectionPage()?loading():`<div class="page-enter">${view[state.page]()}</div>`;
   if(['table-query','wb-query'].includes(activeId)&&$(activeId)){const next=$(activeId);next.focus({preventScroll:true});if(pos!=null)next.setSelectionRange(pos,pos);}
   else if(activeAction){const selector=`[data-action="${CSS.escape(activeAction)}"]${activeItem?`[data-id="${CSS.escape(activeItem)}"]`:''}${activeValue?`[data-value="${CSS.escape(activeValue)}"]`:''}`;document.querySelector(selector)?.focus({preventScroll:true});}
   else if(activeColumn)document.querySelector(`[data-column="${CSS.escape(activeColumn)}"]`)?.focus({preventScroll:true});
+  else if(activeCollectionAction&&!active?.isConnected)document.querySelector(`[data-collection-action="${CSS.escape(activeCollectionAction)}"]${activeItem?`[data-id="${CSS.escape(activeItem)}"]`:''}${activeValue?`[data-value="${CSS.escape(activeValue)}"]`:''}`)?.focus({preventScroll:true});
+  else if(activeId==='collection-monitor-window')$(activeId)?.focus({preventScroll:true});
   const selectPage=document.querySelector('[data-action="select-page"]');
   if(selectPage){const displayed=document.querySelectorAll('[data-action="select-product"]'),selected=[...displayed].filter(input=>input.checked).length;selectPage.indeterminate=selected>0&&selected<displayed.length;}
 }
@@ -287,7 +304,8 @@ async function refresh({reusePageRequest=false,force=true}={}) {
   state.loading=false;$('refresh-button').disabled=true;$('refresh-button').classList.add('spinning');
   const pending=[];
   pending.push(pageRead('capabilities',{signal,maxAge:300000,onData:data=>{state.capabilities=data;updateConnection();render();}}).catch(error=>{if(!signal.aborted)state.errors.capabilities=error;}));
-  if(!state.shops.length||force)pending.push(loadShopDirectory(signal).then(()=>{if(!signal.aborted){state.errors.shops=null;updateConnection();render();}}).catch(error=>{if(!signal.aborted)state.errors.shops=error;}));
+  if(!isCollectionPage()&&(!state.shops.length||force))pending.push(loadShopDirectory(signal).then(()=>{if(!signal.aborted){state.errors.shops=null;updateConnection();render();}}).catch(error=>{if(!signal.aborted)state.errors.shops=error;}));
+  if(isCollectionPage())pending.push(collectionWorkspace.refresh());
   if(state.page==='overview'||state.uiV2&&['shops','products'].includes(state.page))pending.push(loadReportSummary({signal,force}));
   if(state.page==='events'){if(state.uiV2)pending.push(loadEvents({reset:true}));else pending.push(loadReportSummary({signal,force}));}
   if(state.page==='tasks'){pending.push(loadTasks());if(state.uiV2)pending.push(pageRead('/api/v2/tasks/summary',{signal,onData:data=>{state.taskStats=data;state.overview={...state.overview,tasks:data.tasks};updateConnection();render();}}).catch(()=>{}));}
@@ -436,9 +454,10 @@ function navigate() {
   clearTimeout(productQueryTimer);
   for(const controller of [refreshController,productsController,productStatsController,wbController,matchingController,eventsController,tasksController,jobsController])controller?.abort();
   const page=location.hash.slice(1).split('?')[0];state.page=Object.hasOwn(meta,page)?page:'workbench';
+  collectionWorkspace.activate(state.page);
   state.query='';state.pageNumber=1;state.category='';state.stock='';state.shop='';state.eventType='';state.shopFilter='all';
   state.eventCursors=[null];state.eventsData=null;state.eventStats=null;
-  closeMenu();render();if(!state.initializing)refresh({force:false});
+  closeMenu();updateConnection();render();if(!state.initializing||isCollectionPage())refresh({force:false});
   window.scrollTo({top:0,behavior:'instant'});
 }
 function toast(message) { clearTimeout(toastTimer);$('toast').textContent=message;$('toast').hidden=false;toastTimer=setTimeout(()=>$('toast').hidden=true,4500); }
@@ -446,7 +465,7 @@ function openDialog(eyebrow='DETAILS') {
   detailsController?.abort();detailsController=new AbortController();if(!$('detail-dialog').open)detailFocus=document.activeElement;$('dialog-eyebrow').textContent=eyebrow;
   catalogView=null;productDetail=null;shopDetail=null;
   $('detail-dialog').classList.remove('comparison-dialog');
-  $('detail-dialog').classList.remove('match-dialog','wb-drill-dialog','catalog-dialog');
+  $('detail-dialog').classList.remove('match-dialog','wb-drill-dialog','catalog-dialog','collection-dialog');
   $('dialog-content').innerHTML=`<h2 id="dialog-title">详情</h2>${loading()}`;
   if(!$('detail-dialog').open)$('detail-dialog').showModal();$('detail-dialog').scrollTop=0;return detailsController.signal;
 }
@@ -524,6 +543,7 @@ function drawShopDetail(model){
   const statusNote=!s.profile_captured_at?'尚未获取店铺档案，商品采样时间不代表档案已刷新。':old?`上次采集于 ${formatDate(s.profile_captured_at)}；当前保留上一次有效观察。`:s.profile_observation_status==='partial'?'本次档案已保存，部分字段未获取或只有来源展示值。':`档案采集于 ${formatDate(s.profile_captured_at)}（北京时间）。`;
   const detailMetrics=[...metrics,['global_sales_count','全球累计已售（来源标注）'],['product_count','平台在售商品数'],['review_count','店铺评价数']];
   $('dialog-content').innerHTML=`<div class="shop-profile-heading">${shopAvatar(s,true)}<div><div class="shop-name-line"><h2 id="dialog-title">${esc(s.name)}</h2>${profileBadges(s)}</div><p class="detail-subtitle">TikTok Shop · ${esc(s.region)} · ${esc(s.platform_shop_id)}</p>${external(s.shop_url,'访问公开店铺')}</div></div><div class="detail-stats shop-profile-stats">${metrics.map(([key,label])=>`<div class="detail-stat"><small>${label}</small><strong>${esc(profileMetric(s,key))}</strong><span class="shop-metric-state">${esc(profileStateLabels[profileFieldState(s,key)]||'未获取')}</span></div>`).join('')}</div>${notice(statusNote,old||!s.profile_captured_at)}<div class="detail-section"><h3>指标原始值</h3><div class="table-wrap"><table><thead><tr><th>指标</th><th>精确值</th><th>来源展示</th><th>状态</th></tr></thead><tbody>${detailMetrics.map(([key,label])=>`<tr><td>${label}</td><td class="num">${esc(exactCount(s[key]))}</td><td>${esc(s[`${key}_text`]||'—')}</td><td>${esc(profileStateLabels[profileFieldState(s,key)]||'未获取')}</td></tr>`).join('')}</tbody></table></div><div class="detail-grid">${detailField('店铺评分',s.rating??'未获取')}${detailField('在售商品数采集时间',formatDate(s.product_count_captured_at))}${detailField('蓝 V 标识',s.verification_type==='blue_v'?'来源显示蓝 V':profileStateLabels[s.profile_field_state?.verification_type?.state]||'未获取')}${detailField('官方店铺标识',s.identity_label_text||profileStateLabels[s.profile_field_state?.identity_label_key?.state]||'未获取')}</div><p class="snapshot-note">累计已售为店铺页来源指标；未将缩写换算为精确值，未从商品销量相加推算。</p></div><div class="detail-section"><h3>档案来源与采集状态</h3><div class="detail-grid">${detailField('档案采集时间',formatDate(s.profile_captured_at))}${detailField('最近档案任务',task?labels.taskStatuses[task.status]||task.status:'尚无任务')}${detailField('任务尝试次数',task?`${task.attempt_count} / ${task.max_attempts}`:null)}${detailField('最近响应',task?.last_attempt?.response_status)}${detailField('失败类型',task?.last_attempt?.error_type||'—')}${detailField('解析版本',s.profile_parser_version)}</div><div class="stack-gap">${external(s.profile_source_url,'查看档案来源')}${task?` <button class="row-link" data-action="task" data-id="${esc(task.task_id)}">查看采集任务 ${icon('arrow')}</button>`:''}</div></div><div id="shop-profile-history" class="detail-section">${renderShopHistory(model)}</div><div class="detail-section"><h3>已采商品样本</h3><div class="detail-stats">${[['商品样本',state.report?number(s.sampled_products||0):'—'],['起价中位数',money(s.starting_price_stats?.median,state.report?.currency)],['历史详情',state.report?number(s.historical_detail_products||0):'—']].map(([k,v])=>`<div class="detail-stat"><small>${k}</small><strong>${v}</strong></div>`).join('')}</div><div class="detail-grid">${detailField('来源分组',s.source_group||s.discovery_category)}${detailField('最近观察',formatDate(s.last_seen_at))}${detailField('已观察 SKU',state.report?s.sku_count||0:null)}${detailField('已知库存 SKU',state.report?s.known_stock_skus||0:null)}${detailField('明确缺货 SKU',state.report?s.sku_out_of_stock||0:null)}${detailField('SKU 缺货率',pct(s.sku_stockout_pct))}</div><div class="stack-gap">${notice('样本指标仅覆盖已采集商品，尚未采样不等于店铺没有商品。')}</div><button class="button primary" data-action="shop-products" data-id="${esc(s.id)}">查看该店铺商品 ${icon('arrow')}</button></div>`;
+  $('dialog-content').querySelector('.shop-profile-heading').insertAdjacentHTML('afterend',`<div class="detail-grid">${detailField('店铺内部 ID',s.id)}</div>`);
 }
 async function loadShopDetail(id){
   const signal=openDialog('SHOP / 店铺档案'),model=shopDetail={id,shop:null,history:null,cursors:['0'],historyLoading:false,historyError:null};
@@ -549,6 +569,8 @@ async function openTask(id) {
     const data=await request(`tasks/${encodeURIComponent(id)}/attempts`,{signal});if(signal.aborted)return;const t=data.task;
     const progressLabels={page_number:'采集页码',page_products:'本页商品',new_products:'新增商品',new_detail_tasks:'新增详情任务',has_more:'尚有后续页面',complete:'采集完成',detail_updated:'详情已更新',variants_seen:'观察 SKU',variants_upserted:'写入 SKU',new_variants:'新增 SKU',snapshots_written:'已写入快照',variant_snapshots_written:'SKU 快照',events_detected:'检测事件',events_written:'写入事件',baseline:'初始基线',snapshot_id:'快照 ID',previous_snapshot_id:'前次快照 ID'};
     $('dialog-content').innerHTML=`<h2 id="dialog-title">${esc(labels.taskTypes[t.task_type]||t.task_type)}</h2><p class="detail-subtitle">${esc(t.task_id)}</p>${taskBadge(t.status)}<div class="detail-grid">${[['资源',`${t.resource_type} · ${t.resource_id}`],['执行次数',`${t.attempt_count} / ${t.max_attempts}`],['开始时间',formatDate(t.started_at)],['完成时间',formatDate(t.finished_at)],['Worker',t.worker_id],['租约到期',formatDate(t.lease_expires_at)]].map(([k,v])=>detailField(k,v)).join('')}</div><div class="detail-section"><h3>采集进度</h3><div class="detail-grid">${Object.entries(t.progress||{}).map(([k,v])=>detailField(progressLabels[k]||k,typeof v==='boolean'?(v?'是':'否'):v)).join('')||'<span class="muted">尚无采集检查点</span>'}</div></div><div class="detail-section"><h3>执行尝试</h3>${data.attempts.length?`<div class="table-wrap"><table><thead><tr><th>尝试</th><th>状态</th><th>响应</th><th>耗时</th><th>错误类型</th></tr></thead><tbody>${data.attempts.map(a=>`<tr><td>#${a.attempt_no}</td><td><span class="badge ${a.succeeded?'green':'amber'}">${a.succeeded?'成功':a.finished_at?'未成功':'执行中'}</span></td><td>${esc(present(a.response_status))}</td><td>${a.latency_ms==null?'—':number(a.latency_ms)+' ms'}</td><td>${esc(a.error_type||'—')}</td></tr>`).join('')}</tbody></table></div>`:empty('尚未开始执行','执行尝试将在 Worker 处理任务后显示。',true)}</div>`;
+    const taskControls=collectionWorkspace.taskActions(t);
+    if(taskControls)$('dialog-content').insertAdjacentHTML('beforeend',`<div class="collection-detail-actions">${taskControls}</div>`);
   }catch(e){if(!signal.aborted)$('dialog-content').innerHTML=`<h2 id="dialog-title">任务详情</h2>${detailError(e)}`;}
 }
 function openEvent(id) {
@@ -654,7 +676,7 @@ document.addEventListener('change',e=>{
 });
 $('window-select').addEventListener('change',e=>{state.hours=Number(e.target.value);state.pageNumber=1;refresh();});
 $('global-search').addEventListener('submit',e=>{e.preventDefault();const query=$('global-query').value.trim();if(!query)return;location.hash='products';setTimeout(()=>{state.query=query;state.pageNumber=1;loadProducts();},0);});
-$('detail-dialog').addEventListener('close',()=>{detailsController?.abort();matchingForm=null;productDetail=null;shopDetail=null;catalogView=null;++drillRequestVersion;if(detailFocus?.isConnected)detailFocus.focus({preventScroll:true});});
+$('detail-dialog').addEventListener('close',()=>{detailsController?.abort();collectionWorkspace.dialogClosed();matchingForm=null;productDetail=null;shopDetail=null;catalogView=null;++drillRequestVersion;if(detailFocus?.isConnected)detailFocus.focus({preventScroll:true});});
 $('detail-dialog').addEventListener('click',e=>{if(e.target===$('detail-dialog')){const rect=e.target.getBoundingClientRect();if(e.clientX<rect.left||e.clientX>rect.right||e.clientY<rect.top||e.clientY>rect.bottom)closeDialog();}});
 $('mobile-backdrop').addEventListener('click',closeMenu);
 document.addEventListener('keydown',e=>{if(e.key==='/'&&!document.querySelector('dialog[open]')&&!['INPUT','TEXTAREA','SELECT'].includes(document.activeElement.tagName)){e.preventDefault();$('global-query').focus();}if(e.key==='Escape')closeMenu();});
@@ -677,4 +699,4 @@ navigate();
     for(const tab of ['market','attributes','stock','competition','quality'])
       workbenchCache.set(workbenchKey(filters,state.hours,tab),{data:structuredClone(initial),savedAt:Date.now()});
   }
-}).catch(error=>{state.apiV2=error.status!==404;state.uiV2=error.status!==404;}).finally(()=>{state.initializing=false;refresh({force:false});});
+}).catch(error=>{state.apiV2=error.status!==404;state.uiV2=error.status!==404;}).finally(()=>{state.initializing=false;if(isCollectionPage())render();else refresh({force:false});});

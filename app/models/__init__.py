@@ -17,6 +17,7 @@ from .shop import Shop
 from .shop_profile import ShopProfileSnapshot
 from .snapshot import ProductSnapshot, VariantSnapshot
 from .task import CrawlAttempt, CrawlTask
+from .collection import CollectionControl, CollectionPlan, CollectionRun, CollectionRunTask, CollectionOperation
 
 __all__ = [
     "Base", "SeedShopObservation", "Shop", "ShopSeedLink", "Product",
@@ -27,4 +28,5 @@ __all__ = [
     "ProductImage", "ProductMatch", "SkuMatch", "MatchStatus",
     "ProductContent", "ShopProfileSnapshot", "ProductReview",
     "ProductReadModel", "EventReadModel", "AnalyticsRefreshRequest", "AnalyticsSnapshot",
+    "CollectionControl", "CollectionPlan", "CollectionRun", "CollectionRunTask", "CollectionOperation",
 ]

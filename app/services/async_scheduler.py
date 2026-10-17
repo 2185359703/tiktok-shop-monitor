@@ -8,6 +8,7 @@ from app.services.task_runtime import recover_expired_leases
 from app.services.snapshot_service import enqueue_due_snapshots
 from app.services.shop_profile import enqueue_due_shop_profiles
 from app.services.image_backfill import BACKFILL_MODES, capture_mode_expression
+from app.services.collection_management import enqueue_due_collection_plans, is_collection_paused
 
 
 READY = (TaskStatus.PENDING, TaskStatus.RETRY_WAITING, TaskStatus.ABANDONED)
@@ -76,22 +77,25 @@ class AsyncScheduler:
     async def dispatch_once(self) -> dict:
         settings = self.settings
         def recover(session):
+            manually_paused = is_collection_paused(session, settings, lock=True)
             recovered = recover_expired_leases(session, settings)
-            scheduled = enqueue_due_snapshots(session, settings, limit=settings.dispatch_batch_size)
-            profiles_scheduled = enqueue_due_shop_profiles(session, settings, limit=settings.dispatch_batch_size)
+            scheduled = 0 if manually_paused else enqueue_due_snapshots(session, settings, limit=settings.dispatch_batch_size)
+            profiles_scheduled = 0 if manually_paused else enqueue_due_shop_profiles(session, settings, limit=settings.dispatch_batch_size)
+            plans_scheduled = 0 if manually_paused else enqueue_due_collection_plans(session, settings, limit=settings.dispatch_batch_size)
             counts = task_counts(session, settings)
-            return recovered, scheduled, profiles_scheduled, counts
-        recovered, scheduled, profiles_scheduled, counts = await self.database.transaction(recover)
+            return recovered, scheduled, profiles_scheduled, plans_scheduled, manually_paused, counts
+        recovered, scheduled, profiles_scheduled, plans_scheduled, manually_paused, counts = await self.database.transaction(recover)
         self.metrics.recovered.inc(recovered)
         self.metrics.queue_depth.clear()
         for kind, status, count in counts:
             self.metrics.queue_depth.labels(kind.value, status.value).set(count)
         enabled = settings.enabled_task_types
-        if enabled and await self.gate.pause_remaining():
+        if enabled and (manually_paused or await self.gate.pause_remaining()):
             enabled = tuple(kind for kind in enabled if kind in {TaskType.CHANGE_DETECTION, TaskType.REPORT_GENERATION})
         if not enabled:
             return {"recovered": recovered, "published": 0, "snapshots_scheduled": scheduled,
-                    "shop_profiles_scheduled": profiles_scheduled}
+                    "shop_profiles_scheduled": profiles_scheduled, "plan_tasks_scheduled": plans_scheduled,
+                    "collection_paused": manually_paused}
         published = scanned = 0
         enabled = tuple(enabled)
         start = self.rotation % len(enabled)
@@ -133,4 +137,5 @@ class AsyncScheduler:
                 kind_scanned += inspected
         return {"recovered": recovered, "published": published, "snapshots_scheduled": scheduled,
                 "shop_profiles_scheduled": profiles_scheduled,
+                "plan_tasks_scheduled": plans_scheduled, "collection_paused": manually_paused,
                 "backpressured_types": backpressured}

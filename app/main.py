@@ -16,6 +16,8 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 from app.api.routes import router
 from app.api.routes_reports import router as reports_router
 from app.api.routes_collections import router as collections_router
+from app.api.routes_collection_monitor import router as collection_monitor_router
+from app.api.routes_collection_management import router as collection_management_router
 from app.api.routes_analytics import router as analytics_router
 from app.api.routes_images import router as images_router
 from app.api.routes_content import router as content_router
@@ -52,7 +54,7 @@ def create_app(settings: Settings | None = None, engine=None) -> FastAPI:
         try:
             yield
         finally:
-            for name in ("report_cache", "workbench_cache", "ui_snapshot_cache"):
+            for name in ("report_cache", "workbench_cache", "ui_snapshot_cache", "collection_monitor_cache"):
                 cache = getattr(application.state, name, None)
                 if cache is not None:
                     await cache.close()
@@ -63,6 +65,8 @@ def create_app(settings: Settings | None = None, engine=None) -> FastAPI:
     application.include_router(router)
     application.include_router(reports_router)
     application.include_router(collections_router)
+    application.include_router(collection_monitor_router)
+    application.include_router(collection_management_router)
     application.include_router(analytics_router)
     application.include_router(images_router)
     application.include_router(content_router)

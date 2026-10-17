@@ -88,7 +88,7 @@ export async function request(path, { signal, timeout = 8000 } = {}) {
 
 /** Decisions are written only with a user-supplied token held by the UI in memory. */
 export async function write(path, body, { method = 'POST', token, signal } = {}) {
-  if (!['POST', 'PATCH'].includes(method)) throw new ApiError(0, 'invalid_method', '不支持的写入操作。');
+  if (!['POST', 'PATCH', 'PUT'].includes(method)) throw new ApiError(0, 'invalid_method', '不支持的写入操作。');
   if (!token || typeof token !== 'string') throw new ApiError(401, 'token_required', '请先连接已配置的 API 写入令牌。');
   const url=apiUrl(path);
   let response;

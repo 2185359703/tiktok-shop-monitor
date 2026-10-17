@@ -52,6 +52,9 @@ class ExecutionResult:
 def claim_task(session: Session, task_id: str, task_type: TaskType, worker_id: str, settings: Settings) -> TaskLease | None:
     if not worker_id or len(worker_id) > 128:
         raise ValueError("Worker 标识需要 1-128 个字符。")
+    from app.services.collection_management import LOCAL_TYPES, is_collection_paused
+    if task_type not in LOCAL_TYPES and is_collection_paused(session, settings, lock=True):
+        return None
     task = session.scalar(select(CrawlTask).where(
         CrawlTask.task_id == task_id, CrawlTask.task_type == task_type,
         CrawlTask.platform == settings.platform, CrawlTask.region == settings.region,
