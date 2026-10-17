@@ -10,7 +10,7 @@ import tomllib
 from sqlalchemy import String, cast, exists, select
 
 from app.models import CrawlTask, Product, ResourceType, Shop, TaskType
-from app.services.product_reviews import ensure_initial_review_task, reviews_available
+from app.services.product_reviews import enqueue_initial_review_tasks, reviews_available
 from app.settings import Settings
 from app.storage.async_database import AsyncDatabase, make_async_engine
 from app.storage.database import PROJECT_ROOT
@@ -52,7 +52,7 @@ def candidates(session, settings, shop_ids):
 
 
 def enqueue_batch(session, settings, product_ids):
-    return sum(ensure_initial_review_task(session, settings, product_id)[1] for product_id in product_ids)
+    return enqueue_initial_review_tasks(session, settings, product_ids)
 
 
 async def run(args):

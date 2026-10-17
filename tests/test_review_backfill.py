@@ -87,6 +87,21 @@ def test_backfill_is_scoped_spreads_shops_and_replay_creates_no_work(session):
         candidates(session, CONFIG, ["300"])
 
 
+def test_batch_skips_unobserved_resources_and_preserves_transaction_boundary(session):
+    first = product(session)
+    unknown = product(session, session.get(Shop, first.shop_id), review_count=None)
+    with session.begin_nested() as savepoint:
+        assert enqueue_batch(session, CONFIG, [first.id, unknown.id, first.id]) == 1
+        task = session.scalar(select(CrawlTask))
+        assert task.payload["root_task_id"] == task.task_id
+        assert task.payload["max_pages"] == 1 and task.resource_id == str(first.id)
+        savepoint.rollback()
+    assert session.scalar(select(func.count()).select_from(CrawlTask)) == 0
+    assert enqueue_batch(session, Settings(), [first.id]) == 0
+    with pytest.raises(ValueError, match="product_not_found"):
+        enqueue_batch(session, CONFIG, [first.id, 99999999])
+
+
 @pytest.mark.parametrize("asynchronous", [False, True])
 def test_detail_application_schedules_reviews_in_same_transaction(monkeypatch, tmp_path, asynchronous):
     from app.workers import async_handlers, handlers
