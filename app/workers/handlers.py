@@ -14,6 +14,7 @@ from app.crawlers.product_list import identifier, product_id_from_url
 from app.crawlers.product_detail import PARSER_VERSION as DETAIL_PARSER_VERSION
 from app.crawlers.shop_profile import PARSER_VERSION as PROFILE_PARSER_VERSION
 from app.services.product_detail import persist_product_detail
+from app.services.product_reviews import ensure_initial_review_task
 from app.services.snapshot_service import persist_snapshot
 from app.services.change_detector import detect_snapshot_changes
 from app.reports.summary import build_monitoring_report
@@ -212,6 +213,7 @@ class ProductDetailHandler:
         def apply(session, task):
             checkpoint.update(persist_image_observation(session, task, snapshot) if mode in BACKFILL_MODES
                               else self.commit_observation(session, task, snapshot, context))
+            ensure_initial_review_task(session, context.settings, int(task.resource_id))
 
         return ExecutionResult(apply=apply, checkpoint=checkpoint, request_url=snapshot.final_url,
                                response_status=snapshot.status, response_bytes=snapshot.response_bytes,

@@ -18,7 +18,9 @@ def reviews_available(session):
     return inspect(session.connection()).has_table(ProductReview.__tablename__)
 
 
-def ensure_review_task(session, settings, product_id, *, max_pages=None):
+def ensure_review_task(session, settings, product_id, *, max_pages=None, initial_only=False):
+    if initial_only and TaskType.PRODUCT_REVIEWS not in settings.enabled_task_types:
+        return None, False
     max_pages = settings.review_max_pages if max_pages is None else max_pages
     if type(max_pages) is not int or not 1 <= max_pages <= 500:
         raise ValueError("评论页数必须为1至500的整数。")
@@ -26,6 +28,19 @@ def ensure_review_task(session, settings, product_id, *, max_pages=None):
         Product.platform == settings.platform, Product.region == settings.region).with_for_update())
     if product is None:
         raise ValueError("product_not_found")
+    if initial_only:
+        if product.last_success_at is None or not product.review_count:
+            return None, False
+        # The product lock serializes this check with manual collection and
+        # other detail workers. Do not reopen an exhausted initial collection
+        # on each later detail observation; explicit retries remain available.
+        previous = session.scalar(select(CrawlTask).where(
+            CrawlTask.platform == product.platform, CrawlTask.region == product.region,
+            CrawlTask.task_type == TaskType.PRODUCT_REVIEWS,
+            CrawlTask.resource_type == ResourceType.PRODUCT, CrawlTask.resource_id == str(product.id),
+        ).order_by(CrawlTask.id.desc()).limit(1))
+        if previous is not None:
+            return previous, False
     shop = session.get(Shop, product.shop_id)
     if (shop is None or shop.platform != product.platform or shop.region != product.region
             or product_id_from_url(product.product_url) != product.platform_product_id):
@@ -48,6 +63,15 @@ def ensure_review_task(session, settings, product_id, *, max_pages=None):
     session.add(task)
     session.flush()
     return task, True
+
+
+def ensure_initial_review_task(session, settings, product_id):
+    """Collect the public document once; API pagination remains an explicit job.
+
+    Anonymous pagination is currently unavailable. A one-page budget keeps the
+    real public comments and preserves `complete=False` when the source has more.
+    """
+    return ensure_review_task(session, settings, product_id, max_pages=1, initial_only=True)
 
 
 def validate_review_payload(lease):
