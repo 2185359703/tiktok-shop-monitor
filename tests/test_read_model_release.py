@@ -68,6 +68,18 @@ def test_release_preserves_all_live_compose_overrides(release):
     assert json.loads(release.overlay.read_text())["services"]["analytics"]["environment"]["ANALYTICS_CONCURRENCY"] == "1"
 
 
+def test_interrupted_upgrade_preserves_original_rollback_snapshot(release, monkeypatch):
+    release.record["phase"] = "upgrade_prepared"
+    saved = release.evidence / "previous-live-overlay.json"
+    saved.write_text('{"original": true}\n')
+    release.overlay.write_text('{"staging": true}\n')
+    monkeypatch.setattr(release, "read", lambda *args, **kwargs: pytest.fail("Must preserve the interrupted upgrade before reading or writing"))
+    with pytest.raises(ValueError, match="preserved rollback snapshot"):
+        release.upgrade()
+    assert saved.read_text() == '{"original": true}\n'
+    assert release.overlay.read_text() == '{"staging": true}\n'
+
+
 def test_release_cannot_switch_before_backfill_finishes(release, monkeypatch):
     monkeypatch.setattr(release, "read", lambda *args, **kwargs: {"ready": False})
     with pytest.raises(ValueError, match="backfill"):

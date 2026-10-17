@@ -196,6 +196,8 @@ class Release:
         """Stage an additive upgrade of an already-enabled read-model deployment."""
         if self.record.get("phase") in {"warming", "live"}:
             raise ValueError("Release already staged; use status or cutover")
+        if self.record.get("phase") == "upgrade_prepared":
+            raise ValueError("Interrupted upgrade; inspect the preserved rollback snapshot before retrying")
         if not self.overlay.is_file() or not self.read("/api/v2/ui/bootstrap").get("ready"):
             raise ValueError("Upgrade requires an enabled, ready public read model")
         revision = self.run(["docker", "image", "inspect", "--format", '{{index .Config.Labels "org.opencontainers.image.revision"}}', self.image])
