@@ -2,7 +2,7 @@
   "esbuild": "0.25.12",
   "sha256": {
     "app/frontend/api.js": "19597776f250164235768bdb285cc1d651a059812f8c6a412c1eadf8f8333006",
-    "app/frontend/app.bundle.js": "e3d1a1db74a86e4b7a9b0d093cb796929a6dda8d7a6bc35a8f5f4898dec5f50b",
+    "app/frontend/app.bundle.js": "b906ee4a1e13fb51da35c2f0b85e033e20cb429ad76236d8b1fdc09be8bf5b28",
     "app/frontend/app.js": "930aee3db2746dd708491d850f15fa11df23e9725d906bafe5ad363fb624afb6",
     "app/frontend/charts.js": "9347c0d892ea10996abf74737f942d22be3a352179e57d1ccc2d7e39021051f5",
     "app/frontend/collection-alerts.js": "c8b3519266b69d398d25ebf7e45ac83e2f41a9de91c304985e109af8152c087d",
@@ -10,7 +10,7 @@
     "app/frontend/collection-management-view.js": "8458689c170747be3c2d90ca9b444e8e6065a0bbb7bea87f2a62d5e577a58d87",
     "app/frontend/collection-state.js": "69772f850ee9af739e1a7207b46a94f292679427a602106d1ac73106c9ac5a62",
     "app/frontend/collection-ui.js": "7998c094f72d156431d8f1554028a62bb5051a23583e731d4b7e019c2947ca6d",
-    "app/frontend/collection-view.js": "1665ad344b054d43d85be68885b23499f76150d77a2f30d027d777cc66383960",
+    "app/frontend/collection-view.js": "2cffffb41da1cfe5038441a7686d3be18a6d8ad06119108f75568ff2bf5ee4f4",
     "app/frontend/collection.css": "727f586c0069890ba160864796d10eb9ca915c7e3b398d388e9537766e93d090",
     "app/frontend/comparison.js": "e0cacbeb4e57abba5fb8549521d6c87e0803f9ff2c9500412776ac3a0b0cf5e6",
     "app/frontend/matching-ui.js": "643ea3b89dad864bd0d3973ecd9546b5f981d27fa7c19b2b0caa4cd5bf85197d",

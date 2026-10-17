@@ -215,6 +215,25 @@ test('minute rollup warming and process connectivity do not claim zero throughpu
   assert.match(html,/分钟统计正在准备/);assert.match(html,/来源采集吞吐/);assert.match(html,/未就绪/);assert.doesNotMatch(html,/>运行就绪</);assert.match(html,/class="kpi-value">—<small>\/ 分钟/);assert.doesNotMatch(html,/窗口内无失败记录/);
 });
 
+test('monitor counts abandoned tasks once in waiting and retry, while only dead tasks are terminal failures',()=>{
+  const counts={product_detail:{pending:2,retry_waiting:3,abandoned:5,running:7,succeeded:11,dead:13},shop_profile:{abandoned:17,dead:19}};
+  const byType=Object.entries(counts).flatMap(([task_type,statuses])=>Object.entries(statuses).map(([status,count])=>({task_type,status,count})));
+  const html=renderCollectionMonitor({windowMinutes:60,taskGroup:'source',polling:true,data:{
+    queue:{status:'ready',total:77,by_status:{pending:2,retry_waiting:3,abandoned:22,running:7,succeeded:11,dead:32},by_type:byType},
+    runtime:{status:'unavailable'},leases:{expired:4,items:[{task_id:'expired-task',task_type:'product_detail',expired:true}]},
+  }},()=> '');
+  assert.match(html,/kpi-label">等待执行 \/ 重试<\/div><div class="kpi-value">27<\/div>/);
+  const table=html.slice(html.indexOf('<h2 class="panel-title">任务队列</h2>')).split('</section>')[0];
+  const values=[...table.matchAll(/<td class="num">(\d+)<\/td>/g)].map(match=>Number(match[1]));
+  assert.deepEqual(values,[10,7,11,13,17,0,0,19]);
+  assert.equal(values[0]+values[4],27);
+  assert.equal(values[3]+values[7],32);
+  assert.equal(values.reduce((sum,count)=>sum+count,0),77);
+  assert.match(table,/<th>等待 \/ 重试<\/th>/);assert.match(table,/<th>失败终止<\/th>/);
+  assert.doesNotMatch(table,/失败 \/ 失效/);
+  assert.match(html,/租约过期 4 个/);assert.match(html,/租约已过期的任务/);
+});
+
 test('source and local monitor groups cancel stale responses and explain approximate percentiles',async()=>{
   const calls=[];const poller=createCollectionMonitorPoller({read:(minutes,options)=>new Promise(resolve=>calls.push({minutes,...options,resolve})),schedule:()=>1,cancel:()=>{}});
   poller.activate(true);const first=poller.refresh();poller.setGroup('local');
