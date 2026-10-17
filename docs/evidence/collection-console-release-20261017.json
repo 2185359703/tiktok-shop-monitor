@@ -1,0 +1,52 @@
+{
+  "deployed_code_commit": "c821118aed1fbde182952bb9a63629cafa38c6b8",
+  "release_id": "frontend-20261017-collection-c821118",
+  "source_archive_sha256": "ab80c7b0d60ac60396b34d7e4015ca563590f585bb6ed63653da020160f4fcc1",
+  "verification_observed_at": "2026-10-17T04:58:09.026451+00:00",
+  "public_urls": [
+    "https://shopscope-monitor.top/#collections",
+    "https://shopscope-monitor.top/#collection-monitor"
+  ],
+  "tests": {
+    "python_passed": 702,
+    "python_skipped": 2,
+    "skipped_reason": "Separate Redis integration test service was not configured",
+    "node_passed": 15,
+    "browser": "Microsoft Edge via Playwright CLI, synthetic local MySQL and live read-only checks",
+    "local_write_flows_passed": ["create_plan", "edit_plan", "disable_enable_plan", "manual_run", "cancel_task", "idempotent_retry", "retry_history", "pause_resume", "audit"],
+    "mobile_viewport_width": 390,
+    "mobile_document_width": 390,
+    "console_errors": 0
+  },
+  "deployment": {
+    "api_healthy": true,
+    "bootstrap_ready": true,
+    "collection_migration_ready": true,
+    "monitor_index_ready": true,
+    "running_workers": 2,
+    "worker_concurrency_each": 4,
+    "running_schedulers": 1,
+    "scheduler_last_success_at": "2026-10-17T04:58:04.818610+00:00",
+    "latest_heartbeat_age_seconds_max": 6.2,
+    "minimum_source_interval_seconds": 1.0,
+    "analytics_roles": ["projections", "summaries", "heavy"],
+    "unchanged_infrastructure_containers": ["mysql", "redis", "rabbitmq", "detail-egress", "prometheus"],
+    "production_plans_created": 0,
+    "production_control_writes": 0,
+    "product_snapshot_collector_enabled": false
+  },
+  "browser_request_samples_ms": {
+    "management_control": 466,
+    "management_plans": 466,
+    "monitor_default_60_minutes": [784, 697],
+    "monitor_1440_minutes_first_read": 8011,
+    "monitor_1440_minutes_cached": 359
+  },
+  "boundaries": [
+    "Request timings are individual observations, not an SLA or a load test",
+    "24-hour statistics were truncated to the most recent 20000 completed attempts",
+    "No new source collection was triggered for deployment verification",
+    "The one-hour window had no completed attempts; online heartbeats do not prove new collection results",
+    "Alerts are displayed in the console; no external notification integration is configured"
+  ]
+}
