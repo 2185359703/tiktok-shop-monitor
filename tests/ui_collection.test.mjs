@@ -4,7 +4,12 @@ import {createCollectionMonitorPoller} from '../app/frontend/collection-ui.js';
 import {
   parseCollectionResourceIds,collectionErrorMessage,renderCollectionPlanForm,
   renderCollectionMonitor,renderCollectionManagement,renderCollectionRun,
+  renderCollectionPlanDetail,renderCollectionConfirmation,collectionTaskActions,
 } from '../app/frontend/collection-view.js';
+import {collectionPlanPatch,collectionPageCursors,acceptCollectionPage,createCollectionResourcePicker} from '../app/frontend/collection-state.js';
+import {parseCollectionShopUrls,renderCollectionResourceResults,renderCollectionResourceSelected,renderCollectionLaunchForm,renderCollectionLaunchDependencies} from '../app/frontend/collection-editors.js';
+import {renderCollectionLaunchDetail} from '../app/frontend/collection-management-view.js';
+import {renderCollectionAlerts,renderCollectionAlertHistory} from '../app/frontend/collection-alerts.js';
 
 test('collection resources preserve full unsigned bigint IDs and deduplicate before submission',()=>{
   assert.deepEqual(parseCollectionResourceIds('9007199254740993, 18446744073709551615\n12，12'),[
@@ -106,4 +111,179 @@ test('switching monitor windows cancels the old response and keeps the new windo
   assert.equal(poller.state.windowMinutes,15);
   assert.equal(poller.state.data.window.minutes,15);
   poller.stop();
+});
+
+test('metadata edits do not resubmit a one-time schedule, resource order, or stale enabled state',()=>{
+  const original={name:'Original',resource_ids:['9007199254740993','2'],schedule_mode:'once',interval_seconds:null,enabled:true};
+  const draft={...original,name:' Renamed ',resource_ids:['2','9007199254740993']};
+  assert.deepEqual(collectionPlanPatch(original,draft),{name:'Renamed'});
+  assert.deepEqual(collectionPlanPatch(original,{...original}),{});
+  assert.deepEqual(collectionPlanPatch(original,{...original,enabled:false}),{enabled:false});
+  const interval={...original,schedule_mode:'interval',interval_seconds:3600};
+  assert.deepEqual(collectionPlanPatch(interval,{...interval,name:'Only title'}),{name:'Only title'});
+  assert.deepEqual(collectionPlanPatch(interval,{...interval,interval_seconds:7200}),{interval_seconds:7200});
+});
+
+test('page cursors commit only after a successful response',()=>{
+  const model={items:[{id:'20'}],next:'20',cursors:[null],loaded:true,error:null};
+  const proposed=collectionPageCursors(model,'next');
+  assert.deepEqual(proposed,[null,'20']);assert.deepEqual(model.cursors,[null]);
+  assert.deepEqual(collectionPageCursors(model,'next'),proposed);
+  acceptCollectionPage(model,{items:[{id:'19'}],next_before_id:'19'},proposed);
+  assert.deepEqual(model.cursors,[null,'20']);assert.equal(model.items[0].id,'19');
+  assert.deepEqual(collectionPageCursors(model,'prev'),[null]);assert.equal(model.cursors.length,2);
+});
+
+test('resource selection survives search and pagination without selecting ineligible candidates',async()=>{
+  const rows={a:{id:'1',name:'Shop A',eligible:true},b:{id:'2',name:'Shop B',eligible:true},bad:{id:'3',eligible:false,eligibility_reason:'invalid_source_url'}};
+  const calls=[];
+  const picker=createCollectionResourcePicker({taskType:'shop_profile',maximum:2,read:async input=>{
+    calls.push(input);
+    return input.query?{items:[rows.b,rows.bad],next_before_id:null}:input.beforeId?{items:[rows.b],next_before_id:null}:{items:[rows.a],next_before_id:'1'};
+  }});
+  await picker.load();picker.select(rows.a,true);
+  await picker.load({direction:'next'});assert.equal(calls.at(-1).beforeId,'1');
+  await picker.load({query:'Shop B'});assert.equal(calls.at(-1).beforeId,null);
+  picker.select(rows.b,true);assert.equal(picker.select(rows.bad,true),false);
+  assert.deepEqual([...picker.state.selected.keys()],['1','2']);
+  assert.equal(picker.select({id:'4',eligible:true},true),false);
+  const html=renderCollectionResourceResults(picker.state);
+  assert.match(html,/data-collection-resource="3"[^>]*disabled/);assert.match(html,/缺少有效来源链接/);
+  picker.remove('1');assert.deepEqual([...picker.state.selected.keys()],['2']);picker.stop();
+});
+
+test('newer resource searches own their response and leaving the editor cancels reads',async()=>{
+  const calls=[];
+  const picker=createCollectionResourcePicker({taskType:'product_detail',read:input=>new Promise(resolve=>calls.push({...input,resolve}))});
+  const old=picker.load({query:'old'}),recent=picker.load({query:'new'});
+  assert.equal(calls[0].signal.aborted,true);
+  calls[1].resolve({items:[{id:'2',eligible:true}],next_before_id:null});await recent;
+  calls[0].resolve({items:[{id:'1',eligible:true}],next_before_id:null});await old;
+  assert.equal(picker.state.items[0].id,'2');assert.equal(picker.state.resultQuery,'new');
+  const leaving=picker.load({query:'late'});picker.stop();assert.equal(calls[2].signal.aborted,true);
+  calls[2].resolve({items:[{id:'3',eligible:true}]});await leaving;assert.equal(picker.state.items[0].id,'2');
+});
+
+test('failed resource search retains its page and retry starts at the first page of the new search',async()=>{
+  let fail=false;const calls=[];
+  const picker=createCollectionResourcePicker({taskType:'shop_profile',read:async input=>{
+    calls.push(input);if(fail)throw Error('private detail');
+    return {items:[{id:input.beforeId?'19':'20',eligible:true}],next_before_id:input.beforeId?null:'20'};
+  }});
+  await picker.load();await picker.load({direction:'next'});fail=true;
+  await picker.load({query:'new'});assert.deepEqual(picker.state.cursors,[null,'20']);assert.equal(picker.state.items[0].id,'19');
+  assert.match(renderCollectionResourceResults(picker.state),/data-collection-action="resource-prev" disabled/);
+  fail=false;await picker.load();assert.equal(calls.at(-1).beforeId,null);assert.deepEqual(picker.state.cursors,[null]);picker.stop();
+});
+
+test('selected IDs resolve independently and missing market resources remain visible for correction',async()=>{
+  const picker=createCollectionResourcePicker({taskType:'product_snapshot',selectedIds:['1','2'],read:async input=>input.ids?{items:[{id:'1',name:'Known',eligible:true}]}:{items:[]}});
+  await picker.resolveSelected();assert.equal(picker.state.selected.get('1').name,'Known');
+  assert.equal(picker.state.selected.get('2').eligibility_reason,'resource_missing');
+  assert.match(renderCollectionResourceSelected(picker.state),/资源不存在或不属于当前市场/);
+  await picker.replace(['1']);assert.equal(picker.state.selected.size,1);
+  picker.setType('product_detail');await new Promise(resolve=>setImmediate(resolve));
+  assert.equal(picker.state.selected.size,0);picker.setType('product_snapshot');assert.equal(picker.state.selected.size,1);picker.stop();
+});
+
+test('archive remains reversible and manual run explains its scheduling effect',()=>{
+  const plan={id:'2',name:'Plan',resource_ids:['1'],task_type:'shop_profile',schedule_mode:'once',enabled:false,archived_at:'2026-10-17T00:00:00Z'};
+  const html=renderCollectionPlanDetail(plan,{items:[],cursors:[null]},true);
+  assert.match(html,/已归档/);assert.match(html,/data-collection-action="restore"/);assert.doesNotMatch(html,/data-collection-action="run"/);
+  assert.match(renderCollectionConfirmation('run',{...plan,archived_at:null},false),/一次性计划将自动停用/);
+  assert.match(renderCollectionConfirmation('run',{...plan,schedule_mode:'interval',enabled:true},false),/重新计算一个间隔/);
+  assert.match(renderCollectionConfirmation('restore',plan,false),/保持停用/);
+});
+
+test('shop entry input accepts only supported public HTTPS stores and removes tracking data',()=>{
+  const base='https://shop.tiktok.com/us/store/store/123';
+  assert.deepEqual(parseCollectionShopUrls(`${base}?tracking=value#fragment\n${base}`),[base]);
+  assert.deepEqual(parseCollectionShopUrls('https://www.tiktok.com/shop/store/store/123'),['https://www.tiktok.com/shop/store/store/123']);
+  for(const value of ['', 'http://shop.tiktok.com/us/store/store/123','https://localhost/us/store/a/1','https://user:pass@shop.tiktok.com/us/store/a/1','https://shop.tiktok.com/us/k/category','https://shop.tiktok.com/gb/store/a/1'])assert.throws(()=>parseCollectionShopUrls(value));
+  assert.throws(()=>parseCollectionShopUrls(`${base}\nhttps://shop.tiktok.com/us/store/a/456`,1),/最多导入/);
+});
+
+test('single collection shows reused roots, new descendants, pagination, and enabled launch choices',()=>{
+  const form=renderCollectionLaunchForm({launch_task_types:['product_detail'],limits:{max_resources:20}},{});
+  assert.match(form,/value="shop_discovery"[^>]*disabled/);assert.match(form,/value="product_detail" selected/);
+  const html=renderCollectionLaunchDetail({id:'1',name:'<Store>',task_type:'product_detail',status:'running',requested_count:1,created_task_count:0,reused_task_count:1,root_task_count:1,descendant_task_count:1},{items:[{task_id:'root',member_role:'root',task_type:'product_detail',status:'succeeded'},{task_id:'child',member_role:'descendant',task_type:'change_detect',status:'running'}],cursors:[null],next:'7'},()=> '');
+  assert.match(html,/&lt;Store&gt;/);assert.match(html,/直接任务/);assert.match(html,/后续任务/);assert.match(html,/不回溯其已有后续任务/);assert.match(html,/data-collection-action="launch-tasks-next"/);
+});
+
+test('minute rollup warming and process connectivity do not claim zero throughput or ready workers',()=>{
+  const html=renderCollectionMonitor({windowMinutes:60,taskGroup:'source',polling:true,data:{statistics:{ready:false,status:'warming'},attempts:{total:null,failed:null,success_rate:null,throughput_per_minute:null},queue:{status:'pending'},runtime:{status:'available',components:[{id:'worker',role:'worker',status:'online',state:'connecting',ready:false}],ready_counts:{worker:0,scheduler:0}},trend:[]}},()=> '');
+  assert.match(html,/分钟统计正在准备/);assert.match(html,/来源采集吞吐/);assert.match(html,/未就绪/);assert.doesNotMatch(html,/>运行就绪</);assert.match(html,/class="kpi-value">—<small>\/ 分钟/);assert.doesNotMatch(html,/窗口内无失败记录/);
+});
+
+test('source and local monitor groups cancel stale responses and explain approximate percentiles',async()=>{
+  const calls=[];const poller=createCollectionMonitorPoller({read:(minutes,options)=>new Promise(resolve=>calls.push({minutes,...options,resolve})),schedule:()=>1,cancel:()=>{}});
+  poller.activate(true);const first=poller.refresh();poller.setGroup('local');
+  assert.equal(calls[0].signal.aborted,true);assert.equal(calls[1].taskGroup,'local');
+  calls[1].resolve({statistics:{ready:true,p95_approximate:true,p95_max_relative_error:.1},attempts:{p95_duration_ms:1100},runtime:{status:'unavailable'}});await new Promise(resolve=>setImmediate(resolve));
+  calls[0].resolve({attempts:{total:9999}});await first;
+  const html=renderCollectionMonitor(poller.state,()=> '');assert.match(html,/本地处理吞吐/);assert.match(html,/P95近似上界/);assert.match(html,/最大相对误差约 10%/);assert.doesNotMatch(html,/9,999/);poller.stop();
+});
+
+test('supported launch types remain disabled when their collector is not enabled',()=>{
+  const form=renderCollectionLaunchForm({launch_task_types:['shop_discovery','product_detail'],enabled_task_types:['product_detail'],limits:{max_resources:20}});
+  assert.match(form,/value="shop_discovery"[^>]*disabled/);assert.match(form,/value="product_detail" selected/);
+});
+
+test('shop intake warns about disabled downstream collectors while keeping the root submission available',()=>{
+  const form=renderCollectionLaunchForm({launch_task_types:['shop_discovery'],enabled_task_types:['shop_discovery'],limits:{max_resources:20}});
+  assert.match(form,/后续商品发现、商品详情、店铺档案未启用/);
+  assert.match(form,/相关任务将等待服务器启用/);
+  assert.match(form,/<button type="submit" class="button primary">提交采集任务<\/button>/);
+  assert.doesNotMatch(form,/value="shop_discovery"[^>]*disabled/);
+});
+
+test('downstream hints follow the chosen root type and omit collectors already enabled',()=>{
+  const control={enabled_task_types:['shop_discovery','product_discovery','shop_profile']};
+  assert.match(renderCollectionLaunchDependencies('shop_discovery',control),/后续商品详情未启用/);
+  assert.doesNotMatch(renderCollectionLaunchDependencies('shop_discovery',control),/商品发现、|店铺档案/);
+  assert.match(renderCollectionLaunchDependencies('product_discovery',control),/后续商品详情未启用/);
+  assert.equal(renderCollectionLaunchDependencies('product_detail',control),'');
+  assert.equal(renderCollectionLaunchDependencies('product_reviews',control),'');
+  assert.equal(renderCollectionLaunchDependencies('shop_discovery',{enabled_task_types:[...control.enabled_task_types,'product_detail']}),'');
+});
+
+test('batch cancellation explains running and shared work without erasing completion history',()=>{
+  const launch={id:'1',name:'Example',status:'cancelling',cancel_requested_at:'2026-10-17T00:00:00Z'};
+  const html=renderCollectionLaunchDetail(launch,{items:[],cursors:[null]},()=>'',true);
+  assert.match(html,/取消中/);assert.match(html,/继续取消待执行任务/);assert.match(html,/其它有效批次共享的任务继续执行/);assert.match(html,/批次会在关联任务结束后完成取消/);
+  const confirmation=renderCollectionConfirmation('launch-cancel',launch,false);
+  assert.match(confirmation,/正在运行的请求允许完成/);assert.match(confirmation,/其它有效批次共享的任务继续执行/);assert.match(confirmation,/任务记录保留/);
+  const completed=renderCollectionLaunchDetail({...launch,status:'succeeded',cancel_requested_at:null},{items:[],cursors:[null]},()=>'',true);
+  assert.doesNotMatch(completed,/data-collection-action="launch-cancel"/);assert.match(completed,/已完成/);
+});
+
+test('a cancelled batch disables retries without disabling the same shared task in another batch or global details',()=>{
+  const task={task_id:'shared-task',task_type:'product_detail',status:'dead',member_role:'root',resource_type:'product',resource_id:'9007199254740993'};
+  const model={items:[task],cursors:[null]};
+  const actions=(item,options)=>collectionTaskActions(item,true,options);
+  const cancelled=renderCollectionLaunchDetail({id:'1',status:'cancelled',cancel_requested_at:'2026-10-17T00:00:00Z'},model,actions,true);
+  assert.match(cancelled,/data-collection-action="retry-task" data-id="shared-task" disabled/);
+  assert.match(cancelled,/本批次不再新增采集；共享任务若需补采请从仍有效批次操作/);
+  assert.match(cancelled,/商品 · 内部 ID 9007199254740993/);
+  const active=renderCollectionLaunchDetail({id:'2',status:'failed',cancel_requested_at:null},model,actions,true);
+  assert.match(active,/data-collection-action="retry-task" data-id="shared-task"/);
+  assert.doesNotMatch(active,/data-collection-action="retry-task" data-id="shared-task" disabled/);
+  assert.doesNotMatch(collectionTaskActions(task,true),/disabled/);
+});
+
+test('single collection task resource context is escaped before rendering',()=>{
+  const html=renderCollectionLaunchDetail({id:'1',status:'queued'},{items:[{task_id:'task',task_type:'product_detail',status:'pending',resource_type:'<source>',resource_id:'<img src=x onerror=alert(1)>'}],cursors:[null]},()=>'',true);
+  assert.match(html,/&lt;source&gt; · 内部 ID &lt;img src=x onerror=alert\(1\)&gt;/);
+  assert.doesNotMatch(html,/<img|<source>/);
+});
+
+test('persistent alerts distinguish stale evaluation, unknown conditions, acknowledgement, and recovery history',()=>{
+  const alert={id:'1',message:'<Worker unavailable>',code:'worker_unavailable',status:'open',condition_known:false,occurrences:2};
+  const model={items:[alert],cursors:[null],status:'active',evaluation:{status:'stale',last_evaluated_at:'2026-10-17T00:00:00Z'}};
+  const readOnly=renderCollectionAlerts(model,false,()=> '');
+  assert.match(readOnly,/&lt;Worker unavailable&gt;/);assert.match(readOnly,/告警评估更新延迟/);assert.match(readOnly,/待确认/);assert.match(readOnly,/data-collection-action="alert-ack" data-id="1" disabled/);
+  assert.match(readOnly,/固定使用来源采集最近 60 分钟评估/);assert.match(readOnly,/连接写入令牌/);
+  const history=renderCollectionAlertHistory({...alert,status:'acknowledged'},{items:[{event_type:'reopened',status:'open',occurrence:2}],cursors:[null],evaluation:{status:'fresh'}},true);
+  assert.match(history,/再次发生/);assert.match(history,/保留原状态等待下一次有效评估/);assert.doesNotMatch(history,/data-collection-action="alert-ack"/);
+  assert.match(renderCollectionConfirmation('alert-ack',alert,false),/确认不代表故障已解决/);
 });

@@ -18,6 +18,8 @@ from app.api.routes_reports import router as reports_router
 from app.api.routes_collections import router as collections_router
 from app.api.routes_collection_monitor import router as collection_monitor_router
 from app.api.routes_collection_management import router as collection_management_router
+from app.api.routes_collection_intake import router as collection_intake_router
+from app.api.routes_collection_alerts import router as collection_alerts_router
 from app.api.routes_analytics import router as analytics_router
 from app.api.routes_images import router as images_router
 from app.api.routes_content import router as content_router
@@ -67,6 +69,8 @@ def create_app(settings: Settings | None = None, engine=None) -> FastAPI:
     application.include_router(collections_router)
     application.include_router(collection_monitor_router)
     application.include_router(collection_management_router)
+    application.include_router(collection_intake_router)
+    application.include_router(collection_alerts_router)
     application.include_router(analytics_router)
     application.include_router(images_router)
     application.include_router(content_router)

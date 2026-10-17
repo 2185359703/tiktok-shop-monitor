@@ -126,6 +126,8 @@ def persist_review_page(session, task, snapshot):
             session.add(next_task)
             session.flush()
         next_task_id = next_task.task_id
+        from app.services.collection_intake import inherit_launch_tasks
+        inherit_launch_tasks(session, task, [next_task])
     session.flush()
     return {"root_task_id": payload["root_task_id"], "page_number": page.page_number,
             "reviews_seen": len(page.reviews), "reviews_inserted": new, "reviews_updated": updated,

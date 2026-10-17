@@ -30,7 +30,7 @@ def test_every_runtime_handler_and_api_route_is_a_coroutine():
     assert all(inspect.iscoroutinefunction(handler.prepare) for handler in registry.values())
     names = ('routes', 'routes_analytics', 'routes_collections', 'routes_content', 'routes_images',
              'routes_matching', 'routes_reports', 'routes_reviews', 'routes_ui_v2',
-             'routes_collection_monitor', 'routes_collection_management')
+             'routes_collection_monitor', 'routes_collection_management', 'routes_collection_intake', 'routes_collection_alerts')
     for name in names:
         router = importlib.import_module('app.api.' + name).router
         assert all(inspect.iscoroutinefunction(route.endpoint) for route in router.routes)

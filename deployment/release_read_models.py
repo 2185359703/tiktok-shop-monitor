@@ -22,7 +22,9 @@ from pathlib import Path
 SERVICES = ("api", "worker", "scheduler", "collection")
 ANALYTICS_SERVICES = ("analytics", "analytics-summaries", "analytics-heavy")
 UPGRADE_MIGRATIONS = ("scripts.migrate_analytics_rollups", "scripts.migrate_recent_index",
-                      "scripts.migrate_collection_management", "scripts.migrate_collection_monitor_indexes")
+                      "scripts.migrate_collection_management", "scripts.migrate_collection_monitor_indexes",
+                      "scripts.migrate_collection_plan_archive", "scripts.migrate_collection_monitor_rollups",
+                      "scripts.migrate_collection_launches", "scripts.migrate_collection_alerts")
 
 
 def upgrade_role_ready(name, items):
@@ -131,7 +133,8 @@ class Release:
         active = json.loads(self.run(["docker", "exec", api["Id"], "python", "-c",
             "import json; from app.settings import Settings; s=Settings.load(); print(json.dumps({'worker_concurrency':getattr(s,'worker_concurrency',1),'enabled_task_types':list(s.enabled_task_types),'minimum_interval_seconds':s.minimum_interval_seconds}))"]))
         config.setdefault("runtime", {}).update(worker_concurrency=active["worker_concurrency"], analytics_concurrency=1,
-                                                enabled_task_types=active["enabled_task_types"])
+                                                enabled_task_types=active["enabled_task_types"],
+                                                monitor_expected_workers=2, monitor_expected_schedulers=1)
         config.setdefault("request", {})["minimum_interval_seconds"] = active["minimum_interval_seconds"]
         if values.get("ENABLED_TASK_TYPES") is not None:
             config["runtime"]["enabled_task_types"] = [v.strip() for v in values["ENABLED_TASK_TYPES"].split(",") if v.strip()]
@@ -169,7 +172,8 @@ class Release:
                     for name in ("worker", "scheduler", "collection")}
         if not public:
             services["collection"]["command"] = ["python", "-m", "scripts.run_collection", "--poll-seconds", "300"]
-        analysis_env = {**environment, "DATABASE_URL": "${DATABASE_URL:?Set DATABASE_URL}", "ANALYTICS_CONCURRENCY": "1",
+        analysis_env = {**environment, "DATABASE_URL": "${DATABASE_URL:?Set DATABASE_URL}",
+                        "REDIS_URL": "${REDIS_URL:-redis://redis:6379/0}", "ANALYTICS_CONCURRENCY": "1",
                         "DB_POOL_SIZE": "2", "DB_MAX_OVERFLOW": "1"}
         for name, role, cpus, memory in (("analytics", "projections", "0.25", "192m"),
                 ("analytics-summaries", "summaries", "0.6", "256m"), ("analytics-heavy", "heavy", "0.15", "256m")):
@@ -203,8 +207,8 @@ class Release:
                 previous[name] = items
         if any(not upgrade_role_ready(name, items) for name, items in previous.items()):
             raise ValueError("Runtime roles must be running; a fixed collection batch may have exited successfully")
-        if len(previous["worker"]) != 2 or len({item["Image"] for items in previous.values() for item in items}) != 1:
-            raise ValueError("Application roles must have one consistent release and two workers")
+        if len(previous["worker"]) != 2 or any(len({item["Image"] for item in items}) != 1 for items in previous.values()):
+            raise ValueError("Each application role must have one consistent image, with two workers")
         saved_overlay = self.evidence / "previous-live-overlay.json"
         shutil.copy2(self.overlay, saved_overlay)
         saved_overlay.chmod(0o600)
@@ -277,12 +281,18 @@ class Release:
                 and isinstance(control.get("enabled_task_types"), list)
                 and isinstance(control.get("limits"), dict)):
             raise ValueError("Candidate collection control response is invalid")
-        for resource in ("plans", "audit"):
+        for resource in ("plans", "audit", "launches"):
             page = self.read(f"/api/v1/collection-management/{resource}?limit=1", port=18081, timeout=15)
             if not (isinstance(page, dict) and isinstance(page.get("items"), list)
                     and "next_before_id" in page and (page["next_before_id"] is None
                     or isinstance(page["next_before_id"], str))):
                 raise ValueError(f"Candidate collection {resource} response is invalid")
+        resources = self.read("/api/v1/collection-management/resources?task_type=shop_profile&limit=1", port=18081, timeout=15)
+        if not (isinstance(resources, dict) and isinstance(resources.get("items"), list)
+                and "next_before_id" in resources
+                and all(isinstance(row, dict) and isinstance(row.get("id"), str)
+                        and type(row.get("eligible")) is bool for row in resources["items"])):
+            raise ValueError("Candidate collection resources response is invalid")
         monitor = self.read("/api/v1/collections/monitor?window_minutes=60", port=18081, timeout=15)
         if not (isinstance(monitor, dict) and isinstance(monitor.get("generated_at"), str)
                 and all(isinstance(monitor.get(key), dict) for key in ("scope", "window", "queue", "attempts", "leases", "runtime"))
@@ -291,20 +301,48 @@ class Release:
         if not (monitor["window"].get("minutes") == 60
                 and monitor["scope"] == {key: control[key] for key in ("platform", "region")}
                 and monitor["queue"].get("status") in {"fresh", "stale", "pending"}
-                and type(monitor["attempts"].get("total")) is int
+                and isinstance(monitor.get("statistics"), dict)
+                and monitor.get("task_group") == "source"
+                and monitor["statistics"].get("method") == "minute_rollup"
+                and ((monitor["statistics"].get("ready") is True and type(monitor["attempts"].get("total")) is int)
+                     or (monitor["statistics"].get("ready") is False and monitor["attempts"].get("total") is None
+                         and monitor["statistics"].get("status") == "warming"))
                 and isinstance(monitor["leases"].get("items"), list)
                 and monitor["runtime"].get("status") in {"available", "unavailable", "not_configured"}
                 and isinstance(monitor["runtime"].get("components"), list)):
             raise ValueError("Candidate collection monitor response is invalid")
+        incidents = self.read("/api/v1/collections/alerts?status=active&limit=1", port=18081, timeout=15)
+        if not (isinstance(incidents, dict) and isinstance(incidents.get("items"), list)
+                and "next_before_id" in incidents and isinstance(incidents.get("evaluation"), dict)
+                and incidents["evaluation"].get("status") in {"never", "fresh", "stale"}):
+            raise ValueError("Candidate collection alerts response is invalid")
         # Existing writers still use the previous image here. Absence of the new
         # heartbeat is expected until cutover; this check never creates work.
+
+    def reconcile_collection_monitor(self):
+        """Establish coverage after every attempt writer uses the outbox hook."""
+        roles = {name: self.containers(name) for name in SERVICES}
+        if len(roles["api"]) != 1 or len(roles["worker"]) != 2 or len(roles["scheduler"]) != 1:
+            raise ValueError("Collection writers must have the expected process counts")
+        for name, items in roles.items():
+            if not upgrade_role_ready(name, items) or any(item["Config"]["Image"] != self.image for item in items):
+                raise ValueError("Every collection writer must use the committed image before reconciliation")
+        result = json.loads(self.run(["docker", "exec", roles["api"][0]["Id"], "python", "-m",
+            "scripts.collection_monitor_rollups", "--reconcile"], timeout=90))
+        if not result.get("activated"):
+            raise ValueError("Collection monitor reconciliation was not activated")
 
     def cutover(self):
         if self.record.get("phase") not in {"warming", "live"}:
             raise ValueError("Prepare and warm the release first")
-        running_api = self.containers("api")[0]["Config"]["Image"]
-        if running_api not in {*self.record["previous_images"]["api"], self.image}:
-            raise ValueError("The public API was changed by another release")
+        # A completed worker-only release may legitimately differ from the API.
+        # Capture it in upgrade/rollback, then reject changes after that capture.
+        for name in SERVICES:
+            items = self.containers(name)
+            allowed = {*self.record["previous_images"].get(name, []), self.image}
+            if (len(items) != (2 if name == "worker" else 1)
+                    or any(item["Config"]["Image"] not in allowed for item in items) or not upgrade_role_ready(name, items)):
+                raise ValueError("An application role was changed by another release: " + name)
         if not self.read("/api/v2/ui/bootstrap", port=18081)["ready"]:
             raise ValueError("Projection backfill is not ready")
         if self.record.get("previous_public_overlay"):
@@ -331,6 +369,7 @@ class Release:
                 time.sleep(1)
             else:
                 raise RuntimeError("Public API readiness failed")
+            self.reconcile_collection_monitor()
             # Reuse the prefix-aware publisher from this same committed source.
             import importlib.util
             spec = importlib.util.spec_from_file_location("committed_ui_publisher", self.source / "deployment/rollout_async.py")
@@ -339,7 +378,10 @@ class Release:
             publisher.ROOT = self.root
             publisher.publish_ui(self.source, self.commit)
             # Stop only the validated staging service; retain its container for diagnosis.
-            self.run([*self.compose, "stop", "api-candidate"])
+            try:
+                self.run([*self.compose, "stop", "api-candidate"])
+            except RuntimeError:
+                print(json.dumps({"phase": "candidate_cleanup_pending"}), flush=True)
             self.save("live", public_api_changed=True, analytics_concurrency=1, public_url="http://34.20.217.151/shopscope/")
             active = {"commit": self.commit, "image": self.image,
                 "compose_files": [str(path) for path in self.base_files] + [str(self.overlay)],
@@ -355,8 +397,9 @@ class Release:
                 if not previous_overlay.is_relative_to(self.evidence) or not previous_overlay.is_file():
                     raise ValueError("Previous public API override is outside the release record")
                 rollback = [*self.base, "-f", str(previous_overlay)]
-            self.up("api", compose=rollback)
-            self.save("cutover_failed_old_api_restored")
+            previous_services = [name for name in (*SERVICES, *ANALYTICS_SERVICES) if name in self.record["previous_images"]]
+            self.up(*previous_services, compose=rollback)
+            self.save("cutover_failed_old_application_restored")
             raise
 
 

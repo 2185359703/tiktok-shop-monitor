@@ -44,6 +44,7 @@ class CollectionPlan(PrimaryKeyMixin, MarketMixin, TimestampMixin, Base):
     schedule_mode: Mapped[str] = mapped_column(String(16), nullable=False, comment="once=单次，interval=周期")
     interval_seconds: Mapped[int | None] = mapped_column(Integer, comment="周期秒数；单次计划为空")
     enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, server_default="1", comment="是否允许调度器自动生成本计划的新执行")
+    archived_at: Mapped[datetime | None] = mapped_column(UTCDateTime(), comment="归档时间；归档计划保留历史且禁止新派发，恢复后保持停用")
     next_run_at: Mapped[datetime | None] = mapped_column(UTCDateTime(), comment="下一逻辑执行时间；遗漏周期合并为一次")
     last_run_at: Mapped[datetime | None] = mapped_column(UTCDateTime(), comment="最近生成执行记录的时间")
 

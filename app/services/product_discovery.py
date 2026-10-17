@@ -83,12 +83,14 @@ def persist_product_page(session, task: CrawlTask, snapshot: ProductPageSnapshot
         detail_statement = insert(CrawlTask).values(detail_rows)
         session.execute(detail_statement.on_duplicate_key_update(idempotency_key=detail_statement.inserted.idempotency_key))
     next_task_created = False
+    descendant_keys = list(detail_keys)
     budget_reached = snapshot.feed.has_more and page_number >= max_pages
     if snapshot.feed.has_more and not budget_reached:
         continuation = snapshot.feed.next_pagination
         key = fingerprint({"platform": task.platform, "region": task.region, "task_type": "product_discovery",
                            "platform_shop_id": shop.platform_shop_id, "root_task_id": root_task_id,
                            "page_number": page_number + 1, "cursor": continuation.search_params})
+        descendant_keys.append(key)
         if session.scalar(select(CrawlTask.id).where(CrawlTask.idempotency_key == key).with_for_update()) is None:
             session.add(CrawlTask(
                 platform=task.platform, region=task.region, task_type=TaskType.PRODUCT_DISCOVERY,
@@ -113,6 +115,11 @@ def persist_product_page(session, task: CrawlTask, snapshot: ProductPageSnapshot
     if shop.last_seen_at <= snapshot.captured_at:
         shop.last_seen_at = snapshot.captured_at
     session.flush()
+    if (task.payload or {}).get("collection_tracked"):
+        from app.services.collection_intake import inherit_launch_tasks
+        children = session.scalars(select(CrawlTask).where(CrawlTask.idempotency_key.in_(descendant_keys))
+            .order_by(CrawlTask.id).with_for_update()).all()
+        inherit_launch_tasks(session, task, children)
     from app.services.analytics_refresh import mark_products
     mark_products(session, [product.id for product in products])
     return {"new_products": len(set(identifiers) - existing_ids), "page_products": len(identifiers),

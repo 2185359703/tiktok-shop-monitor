@@ -10,6 +10,9 @@ from app.models import Base, MatchStatus, ProductImage, ProductMatch, ProductCon
 from app.models.base import UTCDateTime
 from app.models.analytics_read import ANALYTICS_TABLE_NAMES, ROLLUP_TABLE_NAMES
 from app.models.collection import COLLECTION_TABLE_NAMES
+from app.models.collection_launch import LAUNCH_TABLE_NAMES
+from app.models.collection_monitor import MONITOR_TABLE_NAMES
+from app.models.collection_alerts import ALERT_TABLE_NAMES
 from app.storage.schema import INITIAL_TABLE_NAMES, WORKBENCH_TABLE_NAMES, model_tables, mysql_comments_ddl, mysql_ddl, validate_database_name
 
 
@@ -31,8 +34,8 @@ def test_historical_ten_table_ddl_is_preserved():
 
 
 def test_current_schema_matches_registered_models():
-    assert len(Base.metadata.tables) == 27
-    assert set(Base.metadata.tables) == set(INITIAL_TABLE_NAMES) | set(WORKBENCH_TABLE_NAMES) | set(ANALYTICS_TABLE_NAMES) | set(ROLLUP_TABLE_NAMES) | set(COLLECTION_TABLE_NAMES) | {ProductContent.__tablename__, ShopProfileSnapshot.__tablename__, ProductReview.__tablename__}
+    assert len(Base.metadata.tables) == 35
+    assert set(Base.metadata.tables) == set(INITIAL_TABLE_NAMES) | set(WORKBENCH_TABLE_NAMES) | set(ANALYTICS_TABLE_NAMES) | set(ROLLUP_TABLE_NAMES) | set(COLLECTION_TABLE_NAMES) | set(LAUNCH_TABLE_NAMES) | set(MONITOR_TABLE_NAMES) | set(ALERT_TABLE_NAMES) | {ProductContent.__tablename__, ShopProfileSnapshot.__tablename__, ProductReview.__tablename__}
     assert (MIGRATIONS / "current_schema.sql").read_text(encoding="utf-8") == mysql_ddl()
     assert (ProductImage.__tablename__, ProductMatch.__tablename__, SkuMatch.__tablename__) == WORKBENCH_TABLE_NAMES
     assert MatchStatus.CONFIRMED.value == "confirmed"
@@ -69,6 +72,9 @@ def test_comment_migration_matches_models():
     ("008_analytics_read_models.sql", ANALYTICS_TABLE_NAMES),
     ("010_analytics_rollups.sql", ROLLUP_TABLE_NAMES),
     ("012_collection_management.sql", COLLECTION_TABLE_NAMES),
+    ("016_collection_monitor_rollups.sql", MONITOR_TABLE_NAMES),
+    ("017_collection_launches.sql", LAUNCH_TABLE_NAMES),
+    ("018_collection_alerts.sql", ALERT_TABLE_NAMES),
 ])
 def test_additive_migration_table_and_index_definitions_match_models(filename, names):
     saved = (MIGRATIONS / filename).read_text(encoding="utf-8")
@@ -77,6 +83,9 @@ def test_additive_migration_table_and_index_definitions_match_models(filename, n
         # 011 adds an index without rewriting the earlier deployed migration.
         generated = "\n".join(line for line in generated.split("\n") if not line.startswith("CREATE INDEX ix_read_products_recent_scope "))
         generated = generated.replace("\n\n\n", "\n\n")
+    if filename == "012_collection_management.sql":
+        # Plan archival is additive in 015; the deployed 012 bytes stay fixed.
+        generated = "\n".join(line for line in generated.split("\n") if not line.lstrip().startswith("archived_at "))
     # Headers differ because additive migrations select an existing database. Every
     # CREATE TABLE, column, CHECK, FK, unique constraint and index is checked exactly.
     assert normalized_sql(saved[saved.index("CREATE TABLE IF NOT EXISTS "):]) == generated[generated.index("CREATE TABLE IF NOT EXISTS "):]

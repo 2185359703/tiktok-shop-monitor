@@ -100,3 +100,41 @@ def test_process_roles_claim_only_their_own_queues(monkeypatch, role, kinds):
             SimpleNamespace(status=False, once=False, role=role)), timeout=2)
         assert seen == kinds
     asyncio.run(scenario())
+
+
+def test_incident_evaluation_does_not_wait_for_monitor_backfill(monkeypatch):
+    async def scenario():
+        stop, backfill_started, release_backfill, evaluated = (asyncio.Event() for _ in range(4))
+        class Engine:
+            def execution_options(self, **options): return self
+        class Database:
+            def __init__(self, *args): pass
+            async def read(self, *args): return True
+            async def transaction(self, function, *args):
+                if function is run_analytics.advance_rollups:
+                    backfill_started.set()
+                    await release_backfill.wait()
+                await asyncio.sleep(0)
+            async def close(self): pass
+        class Runner:
+            def __init__(self, *args): pass
+            async def run_once(self, **kwargs):
+                await asyncio.sleep(0)
+                return False
+        async def assess(*args):
+            await backfill_started.wait()
+            assert not release_backfill.is_set()
+            evaluated.set()
+            stop.set()
+            release_backfill.set()
+        async def pause(*args): await asyncio.sleep(0)
+        monkeypatch.setattr(run_analytics, "make_async_engine", lambda url: Engine())
+        monkeypatch.setattr(run_analytics, "AsyncDatabase", Database)
+        monkeypatch.setattr(run_analytics, "AsyncAnalyticsRunner", Runner)
+        monkeypatch.setattr(run_analytics, "evaluate_runtime_once", assess)
+        monkeypatch.setattr(run_analytics, "stop_signal", lambda: stop)
+        monkeypatch.setattr(run_analytics, "pause_until_stop", pause)
+        monkeypatch.setattr(run_analytics, "enabled", lambda: True)
+        await asyncio.wait_for(run_analytics.run(Settings(), SimpleNamespace(status=False, once=False, role="projections")), timeout=2)
+        assert evaluated.is_set()
+    asyncio.run(scenario())

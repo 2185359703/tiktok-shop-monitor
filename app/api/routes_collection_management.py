@@ -21,6 +21,11 @@ Identifier = Annotated[int, Path(ge=1, le=2 ** 64 - 1)]
 Name = Annotated[str, StringConstraints(strict=True, strip_whitespace=True, min_length=1, max_length=80, pattern=r"^[^\x00-\x1f\x7f]+$")]
 ResourceId = Annotated[str, StringConstraints(strict=True, pattern=r"^[1-9][0-9]{0,19}$")]
 ResourceIds = Annotated[list[ResourceId], Field(min_length=1, max_length=100)]
+Search = Annotated[str | None, Query(max_length=80)]
+PlanKind = Literal[TaskType.SHOP_PROFILE, TaskType.PRODUCT_SNAPSHOT]
+ResourceKind = Literal[TaskType.SHOP_PROFILE, TaskType.PRODUCT_SNAPSHOT, TaskType.PRODUCT_DISCOVERY,
+                       TaskType.PRODUCT_DETAIL, TaskType.PRODUCT_REVIEWS]
+SelectedIds = Annotated[list[ResourceId] | None, Query(max_length=100)]
 
 
 class Input(BaseModel):
@@ -103,10 +108,21 @@ def update_control(body: ControlInput, request: Request):
 
 
 @router.get("/plans")
-def plans(request: Request, db: Db, limit: Limit = 20, before_id: Before = None):
-    rows, cursor = page(db, select(CollectionPlan).where(*management.market(CollectionPlan, request.app.state.settings)),
-                        CollectionPlan, limit, before_id)
+def plans(request: Request, db: Db, limit: Limit = 20, before_id: Before = None,
+          q: Search = None, task_type: PlanKind | None = None, enabled: bool | None = None, archived: bool = False):
+    query = management.plans_query(request.app.state.settings, q=q, task_type=task_type, enabled=enabled, archived=archived)
+    rows, cursor = page(db, query, CollectionPlan, limit, before_id)
     return {"items": [management.plan_summary(row) for row in rows], "next_before_id": cursor}
+
+
+@router.get("/resources")
+def resources(request: Request, db: Db, task_type: ResourceKind, q: Search = None, limit: Limit = 20,
+              before_id: Before = None, ids: SelectedIds = None):
+    try:
+        return management.list_resources(db, request.app.state.settings, task_type, q=q, limit=limit,
+                                         before_id=before_id, ids=ids)
+    except management.ManagementError as error:
+        raise HTTPException(error.status, error.code) from None
 
 
 @router.post("/plans", dependencies=[Depends(require_write_token)])
@@ -127,6 +143,23 @@ def update_plan(plan_id: Identifier, body: PlanUpdate, request: Request):
     def update(session, settings):
         return management.plan_summary(management.update_plan(session, settings, plan_id, body.model_dump(exclude_unset=True)))
     return perform(request, update)
+
+
+def change_archive(request, plan_id, archived):
+    def change(session, settings):
+        row, changed = management.set_plan_archived(session, settings, plan_id, archived)
+        return {"changed": changed, "plan": management.plan_summary(row)}
+    return perform(request, change)
+
+
+@router.post("/plans/{plan_id}/archive", dependencies=[Depends(require_write_token)])
+def archive_plan(plan_id: Identifier, body: Input, request: Request):
+    return change_archive(request, plan_id, True)
+
+
+@router.post("/plans/{plan_id}/restore", dependencies=[Depends(require_write_token)])
+def restore_plan(plan_id: Identifier, body: Input, request: Request):
+    return change_archive(request, plan_id, False)
 
 
 @router.post("/plans/{plan_id}/run", dependencies=[Depends(require_write_token)])

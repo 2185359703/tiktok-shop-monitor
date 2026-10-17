@@ -78,6 +78,8 @@ class AsyncScheduler:
         settings = self.settings
         def recover(session):
             manually_paused = is_collection_paused(session, settings, lock=True)
+            from app.services.collection_launch_control import sweep_cancelled_launches
+            sweep_cancelled_launches(session, settings, limit=settings.dispatch_batch_size)
             recovered = recover_expired_leases(session, settings)
             scheduled = 0 if manually_paused else enqueue_due_snapshots(session, settings, limit=settings.dispatch_batch_size)
             profiles_scheduled = 0 if manually_paused else enqueue_due_shop_profiles(session, settings, limit=settings.dispatch_batch_size)

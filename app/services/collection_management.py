@@ -3,7 +3,7 @@
 from copy import deepcopy
 from datetime import timedelta
 
-from sqlalchemy import func, select
+from sqlalchemy import and_, func, or_, select
 from sqlalchemy.dialects.mysql import insert
 from sqlalchemy.exc import IntegrityError
 
@@ -17,7 +17,8 @@ from app.services.task_runtime import database_now
 
 
 PLAN_TYPES = (TaskType.SHOP_PROFILE, TaskType.PRODUCT_SNAPSHOT)
-RETRY_TYPES = (*PLAN_TYPES, TaskType.PRODUCT_DISCOVERY, TaskType.PRODUCT_DETAIL)
+RESOURCE_TYPES = (*PLAN_TYPES, TaskType.PRODUCT_DISCOVERY, TaskType.PRODUCT_DETAIL, TaskType.PRODUCT_REVIEWS)
+RETRY_TYPES = (*PLAN_TYPES, TaskType.SHOP_DISCOVERY, TaskType.PRODUCT_DISCOVERY, TaskType.PRODUCT_DETAIL, TaskType.PRODUCT_REVIEWS)
 LOCAL_TYPES = {TaskType.CHANGE_DETECTION, TaskType.REPORT_GENERATION}
 ACTIVE_STATES = (TaskStatus.PENDING, TaskStatus.RUNNING, TaskStatus.RETRY_WAITING, TaskStatus.ABANDONED)
 MIN_INTERVAL = {TaskType.SHOP_PROFILE: 3600, TaskType.PRODUCT_SNAPSHOT: 60}
@@ -51,8 +52,12 @@ def read_control(session, settings):
             "updated_at": row.updated_at if row is not None else None,
             "writes_enabled": settings.api_token is not None,
             "supported_task_types": list(PLAN_TYPES), "enabled_task_types": list(settings.enabled_task_types),
+            "launch_task_types": [TaskType.SHOP_DISCOVERY, TaskType.PRODUCT_DISCOVERY,
+                                  TaskType.PRODUCT_DETAIL, TaskType.PRODUCT_REVIEWS],
             "limits": {"max_resources": min(MAX_RESOURCES, settings.dispatch_batch_size), "min_interval_seconds": MIN_INTERVAL,
-                       "max_interval_seconds": MAX_INTERVAL}}
+                       "max_interval_seconds": MAX_INTERVAL,
+                       "max_discovery_pages": settings.product_discovery_max_pages,
+                       "max_review_pages": settings.review_max_pages}}
 
 
 def audit(session, settings, action, target_type, target_id, **details):
@@ -77,6 +82,7 @@ def plan_summary(plan):
     return {"id": str(plan.id), "name": plan.name, "task_type": plan.task_type,
             "resource_ids": plan.resource_ids, "schedule_mode": plan.schedule_mode,
             "interval_seconds": plan.interval_seconds, "enabled": plan.enabled,
+            "archived_at": plan.archived_at,
             "next_run_at": plan.next_run_at, "last_run_at": plan.last_run_at,
             "created_at": plan.created_at, "updated_at": plan.updated_at}
 
@@ -89,6 +95,86 @@ def get_plan(session, settings, plan_id, *, lock=False):
     if row is None:
         raise ManagementError("collection_plan_not_found", 404)
     return row
+
+
+def search_condition(model, query, *fields):
+    """Treat '%' and '_' as text, and avoid out-of-range numeric SQL binds."""
+    conditions = [field.contains(query, autoescape=True) for field in fields]
+    if query.isascii() and query.isdecimal() and len(query) <= 20 and 0 < int(query) <= 2 ** 64 - 1:
+        conditions.append(model.id == int(query))
+    return or_(*conditions)
+
+
+def plans_query(settings, *, q=None, task_type=None, enabled=None, archived=False):
+    query = select(CollectionPlan).where(*market(CollectionPlan, settings))
+    query = query.where(CollectionPlan.archived_at.is_not(None) if archived else CollectionPlan.archived_at.is_(None))
+    if task_type is not None:
+        query = query.where(CollectionPlan.task_type == task_type)
+    if enabled is not None:
+        query = query.where(CollectionPlan.enabled.is_(enabled))
+    if q and q.strip():
+        query = query.where(search_condition(CollectionPlan, q.strip(), CollectionPlan.name))
+    return query
+
+
+def resource_eligibility_reason(settings, kind, row):
+    if kind not in settings.enabled_task_types:
+        return "collector_not_enabled"
+    if kind in {TaskType.SHOP_PROFILE, TaskType.PRODUCT_DISCOVERY}:
+        if not row["source_url"] or shop_id_from_url(row["source_url"]) != row["platform_id"]:
+            return "invalid_source_url"
+        return None
+    if product_id_from_url(row["source_url"]) != row["platform_id"]:
+        return "invalid_source_url"
+    if not row["shop_platform_id"].isascii() or not row["shop_platform_id"].isdecimal():
+        return "invalid_resource_identity"
+    if kind in {TaskType.PRODUCT_DETAIL, TaskType.PRODUCT_SNAPSHOT}:
+        if row["currency"] != "USD":
+            return "unsupported_currency"
+        if row["pricing_context"] != "public_listed":
+            return "unsupported_pricing_context"
+    if kind == TaskType.PRODUCT_SNAPSHOT and row["last_success_at"] is None:
+        return "detail_not_collected"
+    return None
+
+
+def list_resources(session, settings, kind, *, q=None, limit=20, before_id=None, ids=None):
+    """A bounded scalar projection; selection never enrolls related resources."""
+    if kind not in RESOURCE_TYPES:
+        raise ManagementError("unsupported_resource_type", 422)
+    if ids is not None and (not ids or len(ids) > MAX_RESOURCES or len(set(ids)) != len(ids)
+            or any(not value.isascii() or not value.isdecimal() or not 0 < int(value) <= 2 ** 64 - 1 for value in ids)
+            or (q and q.strip()) or before_id is not None):
+        raise ManagementError("invalid_resource_selection", 422)
+    if kind in {TaskType.SHOP_PROFILE, TaskType.PRODUCT_DISCOVERY}:
+        model = Shop
+        query = select(Shop.id, Shop.canonical_name.label("name"), Shop.platform_shop_id.label("platform_id"),
+            Shop.canonical_name.label("shop_name"), Shop.canonical_url.label("source_url"))
+        fields = (Shop.canonical_name, Shop.platform_shop_id)
+    else:
+        model = Product
+        query = select(Product.id, Product.title.label("name"), Product.platform_product_id.label("platform_id"),
+            Shop.canonical_name.label("shop_name"), Shop.platform_shop_id.label("shop_platform_id"),
+            Product.product_url.label("source_url"), Product.last_success_at, Product.currency, Product.pricing_context
+        ).join(Shop, and_(Product.shop_id == Shop.id, Product.platform == Shop.platform, Product.region == Shop.region))
+        fields = (Product.title, Product.platform_product_id, Shop.canonical_name)
+    query = query.where(*market(model, settings))
+    if ids is not None:
+        query = query.where(model.id.in_([int(value) for value in ids]))
+        count = len(ids)
+    else:
+        if q and q.strip():
+            query = query.where(search_condition(model, q.strip(), *fields))
+        if before_id is not None:
+            query = query.where(model.id < before_id)
+        count = limit
+    rows = session.execute(query.order_by(model.id.desc()).limit(count + 1)).mappings().all()
+    items = []
+    for row in rows[:count]:
+        reason = resource_eligibility_reason(settings, kind, row)
+        items.append({"id": str(row["id"]), "name": row["name"], "platform_id": row["platform_id"],
+                      "shop_name": row["shop_name"], "eligible": reason is None, "eligibility_reason": reason})
+    return {"items": items, "next_before_id": str(rows[count - 1]["id"]) if ids is None and len(rows) > count else None}
 
 
 def validate_interval(kind, mode, interval):
@@ -158,25 +244,44 @@ def create_plan(session, settings, definition, request_id):
 
 def update_plan(session, settings, plan_id, changes):
     plan = get_plan(session, settings, plan_id, lock=True)
+    if plan.archived_at is not None:
+        raise ManagementError("collection_plan_archived")
     interval = changes.get("interval_seconds", plan.interval_seconds)
     validate_interval(plan.task_type, plan.schedule_mode, interval)
-    if "resource_ids" in changes or changes.get("enabled") is True:
+    actual_changes = {key: value for key, value in changes.items() if getattr(plan, key) != value}
+    if not actual_changes:
+        return plan
+    if "resource_ids" in actual_changes or actual_changes.get("enabled") is True:
         validate_resources(session, settings, plan.task_type, changes.get("resource_ids", plan.resource_ids))
     enabled_before = plan.enabled
     for key in ("name", "resource_ids", "interval_seconds", "enabled"):
-        if key in changes:
-            setattr(plan, key, changes[key])
+        if key in actual_changes:
+            setattr(plan, key, actual_changes[key])
     now = database_now(session)
     if not plan.enabled:
         plan.next_run_at = None
-    elif not enabled_before or plan.next_run_at is None:
+    elif not enabled_before:
         plan.next_run_at = now
-    elif "interval_seconds" in changes:
+    elif plan.schedule_mode == "interval" and "interval_seconds" in actual_changes:
         plan.next_run_at = now + timedelta(seconds=plan.interval_seconds)
-    audit(session, settings, "plan_updated", "plan", plan.id, fields=sorted(changes),
+    audit(session, settings, "plan_updated", "plan", plan.id, fields=sorted(actual_changes),
           resource_count=len(plan.resource_ids), enabled=plan.enabled)
     session.flush()
     return plan
+
+
+def set_plan_archived(session, settings, plan_id, archived):
+    plan = get_plan(session, settings, plan_id, lock=True)
+    if (plan.archived_at is not None) == archived:
+        return plan, False
+    plan.archived_at = database_now(session) if archived else None
+    # Restoration is an administrative action, not consent to start crawling.
+    # Neither operation rewrites existing runs or cancels in-flight leases.
+    plan.enabled, plan.next_run_at = False, None
+    audit(session, settings, "plan_archived" if archived else "plan_restored", "plan", plan.id,
+          enabled=False, inflight_policy="finish")
+    session.flush()
+    return plan, True
 
 
 def plan_is_busy(session, plan):
@@ -255,6 +360,8 @@ def run_plan(session, settings, plan_id, request_id):
     existing = session.scalar(select(CollectionRun).where(CollectionRun.run_key == key).with_for_update())
     if existing is not None:
         return existing, False
+    if plan.archived_at is not None:
+        raise ManagementError("collection_plan_archived")
     if paused:
         raise ManagementError("collection_paused")
     if plan.task_type not in settings.enabled_task_types:
@@ -278,7 +385,8 @@ def enqueue_due_collection_plans(session, settings, *, limit=100):
         return 0
     now = database_now(session)
     plans = session.scalars(select(CollectionPlan).where(*market(CollectionPlan, settings),
-        CollectionPlan.enabled.is_(True), CollectionPlan.task_type.in_(settings.enabled_task_types),
+        CollectionPlan.enabled.is_(True), CollectionPlan.archived_at.is_(None),
+        CollectionPlan.task_type.in_(settings.enabled_task_types),
         CollectionPlan.next_run_at <= now).order_by(CollectionPlan.next_run_at, CollectionPlan.id)
         .limit(10).with_for_update(skip_locked=True)).all()
     roots = 0
@@ -330,6 +438,8 @@ def retry_task(session, settings, task_id):
     source_id = session.scalar(select(CrawlTask.id).where(*market(CrawlTask, settings), CrawlTask.task_id == task_id))
     if source_id is None:
         raise ManagementError("task_not_found", 404)
+    from app.services.collection_launch_control import lock_launch_scope
+    launch_allows_retry = lock_launch_scope(session, settings, task_id)
     lineage = session.execute(select(CollectionRun.id, CollectionRun.plan_id).join(CollectionRunTask,
         CollectionRunTask.run_id == CollectionRun.id).where(CollectionRunTask.task_id == source_id,
             *market(CollectionRun, settings))).all()
@@ -351,12 +461,33 @@ def retry_task(session, settings, task_id):
     existing = session.scalar(select(CrawlTask).where(CrawlTask.idempotency_key == key).with_for_update())
     if existing is not None:
         return existing, False
+    if not launch_allows_retry:
+        raise ManagementError("collection_launch_cancelled")
     for plan in plans:
+        if plan.archived_at is not None:
+            raise ManagementError("collection_plan_archived")
         newer_active = session.scalar(select(CrawlTask.id).join(CollectionRunTask, CollectionRunTask.task_id == CrawlTask.id)
             .join(CollectionRun, CollectionRun.id == CollectionRunTask.run_id).where(CollectionRun.plan_id == plan.id,
                 CollectionRun.id.not_in(run_ids), CrawlTask.status.in_(ACTIVE_STATES)).limit(1).with_for_update(read=True))
         if newer_active is not None:
             raise ManagementError("collection_plan_busy")
+    if original.task_type == TaskType.SHOP_DISCOVERY:
+        from app.models import SeedShopObservation, ResolutionStatus
+        seed = session.get(SeedShopObservation, int(original.resource_id)) if original.resource_id.isdecimal() else None
+        if seed is None or seed.platform != settings.platform or seed.region != settings.region:
+            raise ManagementError("invalid_launch_resources", 422)
+        if seed.resolution_status != ResolutionStatus.PENDING:
+            raise ManagementError("seed_already_processed")
+    from app.services.collection_resource_guard import GUARDED_TYPES, CollectionResourceBusy, lock_idle_resources
+    if original.task_type in GUARDED_TYPES:
+        if not original.resource_id.isascii() or not original.resource_id.isdecimal():
+            raise ManagementError("invalid_launch_resources", 422)
+        try:
+            resources = lock_idle_resources(session, settings, original.task_type, [original.resource_id])
+        except CollectionResourceBusy:
+            raise ManagementError("collection_resource_busy") from None
+        if len(resources) != 1:
+            raise ManagementError("invalid_launch_resources", 422)
     payload = deepcopy(original.payload)
     payload["retry_of_task_id"] = original.task_id
     if original.task_type == TaskType.PRODUCT_DISCOVERY:
@@ -368,6 +499,8 @@ def retry_task(session, settings, task_id):
     session.add(task)
     session.flush()
     session.add_all(CollectionRunTask(run_id=run_id, task_id=task.id, member_role="retry") for run_id in run_ids)
+    from app.services.collection_intake import inherit_launch_tasks
+    inherit_launch_tasks(session, original, [task], role="retry")
     audit(session, settings, "task_retried", "task", original.task_id, retry_task_id=task.task_id,
           history_preserved=True, max_attempts=task.max_attempts)
     return task, True

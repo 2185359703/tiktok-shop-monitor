@@ -18,6 +18,9 @@ from .shop_profile import ShopProfileSnapshot
 from .snapshot import ProductSnapshot, VariantSnapshot
 from .task import CrawlAttempt, CrawlTask
 from .collection import CollectionControl, CollectionPlan, CollectionRun, CollectionRunTask, CollectionOperation
+from .collection_launch import CollectionLaunch, CollectionLaunchTask
+from .collection_monitor import CollectionAttemptFact, CollectionMinuteRollup, CollectionMonitorState
+from .collection_alerts import CollectionAlert, CollectionAlertEvent, CollectionAlertEvaluation
 
 __all__ = [
     "Base", "SeedShopObservation", "Shop", "ShopSeedLink", "Product",
@@ -29,4 +32,7 @@ __all__ = [
     "ProductContent", "ShopProfileSnapshot", "ProductReview",
     "ProductReadModel", "EventReadModel", "AnalyticsRefreshRequest", "AnalyticsSnapshot",
     "CollectionControl", "CollectionPlan", "CollectionRun", "CollectionRunTask", "CollectionOperation",
+    "CollectionLaunch", "CollectionLaunchTask",
+    "CollectionAttemptFact", "CollectionMinuteRollup", "CollectionMonitorState",
+    "CollectionAlert", "CollectionAlertEvent", "CollectionAlertEvaluation",
 ]

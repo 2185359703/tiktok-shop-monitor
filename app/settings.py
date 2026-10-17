@@ -33,6 +33,8 @@ class Settings:
     worker_concurrency: int = 8
     analytics_concurrency: int = 4
     analytics_build_budget_seconds: int = 300
+    monitor_expected_workers: int = 1
+    monitor_expected_schedulers: int = 1
     review_max_pages: int = 50
     review_http_backend: str = "curl_cffi"
     snapshot_interval_seconds: int = 3600
@@ -92,6 +94,9 @@ class Settings:
             raise ValueError("Worker及分析协程并发数必须为1至32。")
         if type(self.analytics_build_budget_seconds) is not int or not 30 <= self.analytics_build_budget_seconds <= 600:
             raise ValueError("后台统计预算必须是30至600秒的整数。")
+        if any(type(value) is not int or not 1 <= value <= 64
+               for value in (self.monitor_expected_workers, self.monitor_expected_schedulers)):
+            raise ValueError("预期监控进程数必须是1至64的整数。")
         if type(self.review_max_pages) is not int or not 1 <= self.review_max_pages <= 500:
             raise ValueError("评论页数预算必须为1至500；达到预算不代表采集完成。")
         if self.review_http_backend not in {"httpx", "curl_cffi"}:

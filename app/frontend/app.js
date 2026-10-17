@@ -462,6 +462,8 @@ function navigate() {
 }
 function toast(message) { clearTimeout(toastTimer);$('toast').textContent=message;$('toast').hidden=false;toastTimer=setTimeout(()=>$('toast').hidden=true,4500); }
 function openDialog(eyebrow='DETAILS') {
+  if(!collectionWorkspace.canCloseDialog())return AbortSignal.abort();
+  collectionWorkspace.dialogClosed();
   detailsController?.abort();detailsController=new AbortController();if(!$('detail-dialog').open)detailFocus=document.activeElement;$('dialog-eyebrow').textContent=eyebrow;
   catalogView=null;productDetail=null;shopDetail=null;
   $('detail-dialog').classList.remove('comparison-dialog');
@@ -615,7 +617,7 @@ async function downloadReport(format,jobId) {
   const path=jobId?`/api/v1/reports/jobs/${encodeURIComponent(jobId)}/files/${format}`:`/api/v1/reports/current?lookback_hours=${state.hours}&format=${format}`;
   try{const response=await fetch(deploymentPath(path),{credentials:'same-origin',cache:'no-store'});if(!response.ok){toast(response.status===404?'报告文件暂不可用。':'报告下载失败，请稍后重试。');return;}const blob=await response.blob(),url=URL.createObjectURL(blob),a=document.createElement('a');a.href=url;a.download=`shopscope-report-${jobId||'current'}.${format}`;document.body.append(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),10000);toast('报告下载已开始。');}catch{toast('无法连接服务，报告下载失败。');}
 }
-function closeDialog(){detailsController?.abort();$('detail-dialog').close();}
+function closeDialog(){if(!collectionWorkspace.canCloseDialog())return;detailsController?.abort();$('detail-dialog').close();}
 const mobileLayout=window.matchMedia('(max-width:900px)');
 function syncSidebar(){ $('sidebar').inert=mobileLayout.matches&&!$('sidebar').classList.contains('open'); }
 function closeMenu(){const focusInNav=$('sidebar').contains(document.activeElement);$('sidebar').classList.remove('open');$('mobile-backdrop').hidden=true;document.querySelector('[data-action="menu"]').setAttribute('aria-expanded','false');syncSidebar();if(focusInNav&&mobileLayout.matches)document.querySelector('[data-action="menu"]').focus();}
@@ -677,6 +679,7 @@ document.addEventListener('change',e=>{
 $('window-select').addEventListener('change',e=>{state.hours=Number(e.target.value);state.pageNumber=1;refresh();});
 $('global-search').addEventListener('submit',e=>{e.preventDefault();const query=$('global-query').value.trim();if(!query)return;location.hash='products';setTimeout(()=>{state.query=query;state.pageNumber=1;loadProducts();},0);});
 $('detail-dialog').addEventListener('close',()=>{detailsController?.abort();collectionWorkspace.dialogClosed();matchingForm=null;productDetail=null;shopDetail=null;catalogView=null;++drillRequestVersion;if(detailFocus?.isConnected)detailFocus.focus({preventScroll:true});});
+$('detail-dialog').addEventListener('cancel',event=>{if(!collectionWorkspace.canCloseDialog())event.preventDefault();});
 $('detail-dialog').addEventListener('click',e=>{if(e.target===$('detail-dialog')){const rect=e.target.getBoundingClientRect();if(e.clientX<rect.left||e.clientX>rect.right||e.clientY<rect.top||e.clientY>rect.bottom)closeDialog();}});
 $('mobile-backdrop').addEventListener('click',closeMenu);
 document.addEventListener('keydown',e=>{if(e.key==='/'&&!document.querySelector('dialog[open]')&&!['INPUT','TEXTAREA','SELECT'].includes(document.activeElement.tagName)){e.preventDefault();$('global-query').focus();}if(e.key==='Escape')closeMenu();});

@@ -1,26 +1,22 @@
 """Bounded collection monitoring without rescanning task payloads or building charts."""
 
-import math
-import re
 from collections import Counter
-from datetime import datetime, timedelta
+from datetime import datetime
 
 from sqlalchemy import select
 
-from app.models import CrawlAttempt, CrawlTask, TaskStatus
+from app.models import CrawlTask, TaskStatus
 from app.models.analytics_read import AnalyticsSnapshot
 from app.services.analytics_refresh import VERSION, key_for, now, scope
+from app.services.collection_rollups import WINDOWS, GROUPS, read_statistics, recent_failures, safe_error
 
 
-WINDOWS = (15, 60, 360, 1440)
-MAX_ATTEMPTS = 20_000
 MAX_LEASES = 200
-ERROR_CODE = re.compile(r"[a-z][a-z0-9_]{0,63}\Z")
 ACTIVE = {"pending", "running", "retry_waiting", "abandoned"}
 
 
 def error_code(value):
-    return value if isinstance(value, str) and ERROR_CODE.fullmatch(value) else "unknown"
+    return safe_error(value)
 
 
 def iso(value):
@@ -42,49 +38,14 @@ def queue_snapshot(db, settings, stamp):
             "failed": by_status["dead"], "by_status": dict(by_status), "by_type": counts}
 
 
-def read_monitor(db, settings, window_minutes=60, *, stamp=None):
-    if window_minutes not in WINDOWS:
-        raise ValueError("invalid_monitor_window")
+def read_monitor(db, settings, window_minutes=60, *, task_group="source", stamp=None):
+    if window_minutes not in WINDOWS or task_group not in GROUPS:
+        raise ValueError("invalid_monitor_window_or_group")
     stamp = stamp or now(db)
-    start = stamp - timedelta(minutes=window_minutes)
-    bucket_seconds = {15: 60, 60: 300, 360: 1800, 1440: 7200}[window_minutes]
+    statistics = read_statistics(db, settings, window_minutes, task_group, stamp)
+    start = datetime.fromisoformat(statistics["window"]["since"])
+    until = datetime.fromisoformat(statistics["window"]["until"])
     market = (CrawlTask.platform == settings.platform, CrawlTask.region == settings.region)
-    # Only scalar attempt fields are loaded. The newest bounded sample is filtered
-    # by market before LIMIT so another tenant cannot crowd it out.
-    rows = db.execute(select(CrawlTask.task_id, CrawlTask.task_type,
-        CrawlAttempt.attempt_no, CrawlAttempt.worker_id, CrawlAttempt.started_at, CrawlAttempt.finished_at,
-        CrawlAttempt.succeeded, CrawlAttempt.error_type, CrawlAttempt.response_status)
-        .select_from(CrawlAttempt).join(CrawlTask, CrawlTask.id == CrawlAttempt.task_id)
-        .where(*market, CrawlAttempt.finished_at >= start, CrawlAttempt.finished_at <= stamp,
-               CrawlAttempt.succeeded.is_not(None))
-        .with_hint(CrawlAttempt, "FORCE INDEX (ix_crawl_attempts_monitor)", dialect_name="mysql")
-        .prefix_with("STRAIGHT_JOIN", dialect="mysql")
-        .order_by(CrawlAttempt.finished_at.desc(), CrawlAttempt.id.desc()).limit(MAX_ATTEMPTS + 1)).all()
-    truncated = len(rows) > MAX_ATTEMPTS
-    rows = rows[:MAX_ATTEMPTS]
-    # Buckets partition this precise selected window, including empty intervals.
-    bucket_count = math.ceil(window_minutes * 60 / bucket_seconds)
-    trend = [{"time": iso(start + timedelta(seconds=index * bucket_seconds)),
-              "completed": 0, "succeeded": 0, "failed": 0} for index in range(bucket_count)]
-    failures, durations, errors = [], [], Counter()
-    succeeded = 0
-    for row in rows:
-        success = row.succeeded is True
-        succeeded += success
-        duration = max(0, (row.finished_at - row.started_at).total_seconds() * 1000)
-        durations.append(duration)
-        index = min(bucket_count - 1, int((row.finished_at - start).total_seconds() // bucket_seconds))
-        trend[index]["completed"] += 1
-        trend[index]["succeeded" if success else "failed"] += 1
-        if not success:
-            code = error_code(row.error_type)
-            errors[code] += 1
-            if len(failures) < 12:
-                failures.append({"task_id": row.task_id, "task_type": str(row.task_type),
-                    "attempt_no": row.attempt_no, "worker_id": row.worker_id,
-                    "error_type": code, "response_status": row.response_status,
-                    "finished_at": iso(row.finished_at)})
-    durations.sort()
     # At most 200 live/expired leases; an overflow is explicitly a lower bound.
     lease_rows = db.execute(select(CrawlTask.task_id, CrawlTask.task_type, CrawlTask.worker_id,
         CrawlTask.started_at, CrawlTask.lease_expires_at).where(*market, CrawlTask.status == TaskStatus.RUNNING)
@@ -95,20 +56,14 @@ def read_monitor(db, settings, window_minutes=60, *, stamp=None):
         "expired": row.lease_expires_at is None or row.lease_expires_at <= stamp} for row in lease_rows[:MAX_LEASES]]
     expired = sum(item["expired"] for item in lease_items)
     return {"generated_at": iso(stamp), "scope": {"platform": settings.platform, "region": settings.region},
-        "window": {"minutes": window_minutes, "since": iso(start), "until": iso(stamp), "bucket_seconds": bucket_seconds},
+        **statistics,
         "queue": queue_snapshot(db, settings, stamp),
-        "attempts": {"total": len(rows), "succeeded": succeeded, "failed": len(rows) - succeeded,
-            "success_rate": round(100 * succeeded / len(rows), 2) if rows else None,
-            "avg_duration_ms": round(sum(durations) / len(durations), 1) if durations else None,
-            "p95_duration_ms": round(durations[math.ceil(len(durations) * .95) - 1], 1) if durations else None,
-            "throughput_per_minute": round(len(rows) / window_minutes, 2),
-            "sampled": truncated, "truncated": truncated, "limit": MAX_ATTEMPTS},
-        "trend": trend, "errors": [{"error_type": code, "count": count} for code, count in errors.most_common(12)],
-        "recent_failures": failures, "leases": {"active": len(lease_items) - expired, "expired": expired,
+        "recent_failures": recent_failures(db, settings, start, until, task_group),
+        "leases": {"active": len(lease_items) - expired, "expired": expired,
             "truncated": len(lease_rows) > MAX_LEASES, "items": lease_items}}
 
 
-def monitor_alerts(snapshot, *, scheduler_poll_seconds=5):
+def monitor_alerts(snapshot, *, scheduler_poll_seconds=5, expected_workers=1, expected_schedulers=1):
     alerts = []
     queue, attempts, runtime = snapshot["queue"], snapshot["attempts"], snapshot["runtime"]
     if queue["status"] == "pending":
@@ -117,19 +72,29 @@ def monitor_alerts(snapshot, *, scheduler_poll_seconds=5):
         alerts.append({"code": "queue_summary_stale", "severity": "warning", "message": "任务汇总超过一分钟未更新。"})
     if snapshot["leases"]["expired"]:
         alerts.append({"code": "expired_leases", "severity": "warning", "message": "存在到期租约，等待调度器恢复。"})
-    if attempts["truncated"]:
-        alerts.append({"code": "attempt_sample_limit", "severity": "info", "message": "当前窗口超过采样上限，仅统计最近两万次完成尝试。"})
-    if attempts["total"] >= 10 and attempts["success_rate"] < 80:
+    statistics = snapshot.get("statistics", {})
+    if statistics.get("status") == "warming":
+        alerts.append({"code": "statistics_warming", "severity": "info", "message": "完整监控统计正在准备，尚未发布的数量保持未知。"})
+    elif statistics.get("status") == "stale":
+        alerts.append({"code": "statistics_stale", "severity": "warning", "message": "监控统计更新延迟，当前显示上次完整发布的数据。"})
+    if (attempts["total"] or 0) >= 10 and attempts["success_rate"] < 80:
         alerts.append({"code": "high_failure_rate", "severity": "warning", "message": "当前窗口内尝试成功率低于 80%。"})
     if runtime["status"] != "available":
         alerts.append({"code": "runtime_unknown", "severity": "warning", "message": "运行心跳暂不可用，不能据此判断采集进程离线。"})
     else:
-        online_roles = {item["role"] for item in runtime["components"] if item["status"] == "online"}
+        running = [item for item in runtime["components"] if item["status"] == "online" and item["state"] == "running"]
+        online_roles = {item["role"] for item in running}
         if "worker" not in online_roles:
-            alerts.append({"code": "worker_heartbeat_missing", "severity": "warning", "message": "尚未收到近期 Worker 心跳，采集进程状态待确认。"})
+            alerts.append({"code": "worker_heartbeat_missing", "severity": "warning", "message": "暂无近期心跳正常且已就绪的 Worker，采集进程状态待确认。"})
         if "scheduler" not in online_roles:
-            alerts.append({"code": "scheduler_heartbeat_missing", "severity": "warning", "message": "尚未收到近期调度器心跳，调度状态待确认。"})
-        if any(item["status"] != "online" or item["state"] in {"reconnecting", "degraded"} for item in runtime["components"]):
+            alerts.append({"code": "scheduler_heartbeat_missing", "severity": "warning", "message": "暂无近期心跳正常且已就绪的调度器，调度状态待确认。"})
+        for role, expected, label in (("worker", expected_workers, "Worker"), ("scheduler", expected_schedulers, "调度器")):
+            actual = sum(item["role"] == role for item in running)
+            if actual < expected:
+                alerts.append({"code": f"{role}_capacity_missing", "severity": "warning",
+                    "message": f"{label} 就绪进程 {actual}/{expected}，低于配置的预期数量。"})
+        if any(item["state"] != "stopped" and (item["status"] != "online" or item["state"] != "running")
+               for item in runtime["components"]):
             alerts.append({"code": "runtime_attention", "severity": "warning", "message": "部分已登记进程心跳过期或正在重连。"})
         def timestamp(value):
             try:

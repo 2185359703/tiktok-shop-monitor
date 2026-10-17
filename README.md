@@ -43,6 +43,8 @@ ShopScope 面向 TikTok Shop 美国站服装场景，将分散的公开店铺、
 | 历史快照与事件 | 保留商品和 SKU 的观察历史，比较价格、缺货、补货、折扣与规格变化 |
 | 竞品关系管理 | 提供规则候选，人工确认同款和精确 SKU 映射，保存与撤销关系，展示可比规格的价差 |
 | 采集任务管理 | 使用租约、心跳、重试、检查点与队列背压管理任务，查看执行状态和失败原因 |
+| 采集控制台 | 搜索选择采集资源，启动单次批次，管理周期计划、归档恢复、整批取消及后续任务 |
+| 采集运行监控 | 查看完整分钟统计、来源与本地分组、进程就绪和持久告警，确认并追踪恢复历史 |
 | 报告与可观测性 | 导出 HTML、Markdown、JSON 报告，提供健康检查、Prometheus 指标和告警配置 |
 
 分析工作台还展示字段覆盖、图片覆盖、详情新鲜度与历史跨度，便于判断某项结论有多少实际数据支撑。
@@ -239,6 +241,7 @@ docs/             使用指南、设计说明与历史验证记录
 | 界面、分析口径、图片与竞品匹配 | [前端工作台](docs/frontend.md) · [分析工作台](docs/analytics-workbench.md) |
 | 系统如何组织，任务如何恢复 | [架构设计](docs/architecture.md) · [任务流转](docs/task-flow.md) |
 | 异步数据库、并发采集与后台任务 | [异步后端运行说明](docs/backend-async.md) |
+| 采集计划、单次批次、取消、完整统计及告警 | [采集控制台扩展版](docs/collection-console-v2.md) |
 | 种子来源、导入与店铺核验 | [种子说明](data/seed/README.md) · [种子导入](docs/seed-discovery.md) · [入口核验](docs/seed-link-verification.md) |
 | 店铺 Logo、认证、粉丝、累计已售和视频数 | [店铺档案采集与历史快照](docs/shop-profile-collection.md) |
 | 商品发现、分页与 SKU 补全 | [商品发现](docs/product-discovery.md) · [商品详情](docs/product-detail.md) |

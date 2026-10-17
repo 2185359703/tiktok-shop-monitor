@@ -8,13 +8,13 @@ from uuid import uuid4
 
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import delete, func, select
+from sqlalchemy import delete, event, func, inspect, select, text
 from sqlalchemy.orm import sessionmaker
 
 from app.main import create_app
 from app.models import CollectionControl, CollectionOperation, CollectionPlan, CollectionRun, CollectionRunTask, CrawlAttempt, CrawlTask, Product, ResourceType, Shop, TaskStatus, TaskType
 from app.observability.metrics import Metrics
-from app.services.collection_management import ManagementError, cancel_task, create_plan, enqueue_due_collection_plans, is_collection_paused, retry_task, run_plan, run_summary, set_control, update_plan
+from app.services.collection_management import ManagementError, cancel_task, create_plan, enqueue_due_collection_plans, is_collection_paused, list_resources, retry_task, run_plan, run_summary, set_control, set_plan_archived, update_plan
 from app.services.scheduler import Scheduler
 from app.services.task_runtime import ExecutionResult, claim_task, database_now, finalize_task
 from app.settings import Settings
@@ -189,6 +189,7 @@ def test_cancel_refuses_running_and_retry_creates_one_child_without_rewriting_hi
         cancel_task(session, CONFIG, running.task_id)
     original = task(session, kind=TaskType.PRODUCT_DISCOVERY, status=TaskStatus.DEAD)
     original.resource_type = ResourceType.SHOP
+    original.resource_id = str(shop(session).id)
     original.attempt_count = original.max_attempts = 3
     original.last_error = "kept private legacy text"
     old_finish = database_now(session)
@@ -340,7 +341,7 @@ def test_scheduler_skips_plan_locked_by_manual_run_without_resource_lock_deadloc
         plan_id = plan.id
     scheduler_module = async_scheduler if native_async else scheduler
     original_profiles = scheduler_module.enqueue_due_shop_profiles
-    original_resources = collection_management.validate_resources
+    original_get_plan = collection_management.get_plan
 
     def periodic_profiles(db, settings, *, limit):
         result = original_profiles(db, settings, limit=limit)
@@ -349,14 +350,18 @@ def test_scheduler_skips_plan_locked_by_manual_run_without_resource_lock_deadloc
         assert plan_locked.wait(timeout=10), "manual run did not acquire its plan lock"
         return result
 
-    def manual_resources(db, settings, kind, identifiers, *, lock=False):
+    def manual_plan(db, settings, identifier, *, lock=False):
+        result = original_get_plan(db, settings, identifier, lock=lock)
         if lock:
-            plan_locked.set()
             assert resource_locked.is_set()
-        return original_resources(db, settings, kind, identifiers, lock=lock)
+            # Signal the actual lock boundary. The later busy query may itself
+            # wait on the scheduler's uncommitted task, depending on MySQL's
+            # join order; waiting until resource validation invents a deadlock.
+            plan_locked.set()
+        return result
 
     monkeypatch.setattr(scheduler_module, "enqueue_due_shop_profiles", periodic_profiles)
-    monkeypatch.setattr(collection_management, "validate_resources", manual_resources)
+    monkeypatch.setattr(collection_management, "get_plan", manual_plan)
 
     class Broker:
         def ready_count(self, kind): return 1000
@@ -471,7 +476,291 @@ def test_api_authorization_payload_bounds_market_isolation_and_safe_audit(sessio
         assert client.put(PREFIX + "/control", json={"paused": False}, headers=AUTH).json()["paused"] is False
 
 
-def test_additive_management_migration_is_offline_and_matches_models():
+def test_additive_management_migration_keeps_its_historical_definition():
     saved = Path(__file__).resolve().parents[1] / "migrations/012_collection_management.sql"
     assert saved.read_text(encoding="utf-8") == additive_sql()
     assert "ALTER TABLE" not in additive_sql() and "DROP TABLE" not in additive_sql()
+    assert "archived_at" not in additive_sql()
+
+
+@pytest.mark.parametrize("mode", ["once", "interval"])
+def test_plan_edit_only_reschedules_actual_schedule_changes(session, monkeypatch, mode):
+    from app.services import collection_management
+
+    plan, _ = create_plan(session, CONFIG, definition([shop(session).id], mode=mode), uuid4())
+    fixed_now = database_now(session)
+    scheduled = fixed_now + timedelta(hours=4)
+    plan.next_run_at = scheduled
+    session.flush()
+    monkeypatch.setattr(collection_management, "database_now", lambda db: fixed_now)
+    # Existing clients submit complete form values, including null for once.
+    update_plan(session, CONFIG, plan.id, {"name": "Renamed", "interval_seconds": plan.interval_seconds,
+                                         "resource_ids": plan.resource_ids, "enabled": True})
+    assert plan.next_run_at == scheduled
+    audit_row = session.scalar(select(CollectionOperation).where(CollectionOperation.action == "plan_updated"))
+    assert audit_row.details["fields"] == ["name"]
+    update_plan(session, CONFIG, plan.id, {"name": "Renamed", "interval_seconds": plan.interval_seconds})
+    assert session.scalar(select(func.count()).select_from(CollectionOperation).where(CollectionOperation.action == "plan_updated")) == 1
+    update_plan(session, CONFIG, plan.id, {"enabled": False})
+    assert not plan.enabled and plan.next_run_at is None
+    update_plan(session, CONFIG, plan.id, {"name": "Still disabled"})
+    assert plan.next_run_at is None
+    update_plan(session, CONFIG, plan.id, {"enabled": True})
+    assert plan.enabled and plan.next_run_at == fixed_now
+    if mode == "once":
+        update_plan(session, CONFIG, plan.id, {"interval_seconds": None})
+        assert plan.next_run_at == fixed_now
+        with pytest.raises(ManagementError, match="invalid_plan_interval"):
+            update_plan(session, CONFIG, plan.id, {"interval_seconds": 3600})
+    else:
+        with pytest.raises(ManagementError, match="invalid_plan_interval"):
+            update_plan(session, CONFIG, plan.id, {"interval_seconds": None})
+        update_plan(session, CONFIG, plan.id, {"interval_seconds": 7200})
+        assert plan.next_run_at == fixed_now + timedelta(hours=2)
+        update_plan(session, CONFIG, plan.id, {"enabled": False, "interval_seconds": 10800})
+        assert plan.next_run_at is None and plan.interval_seconds == 10800
+        update_plan(session, CONFIG, plan.id, {"enabled": True})
+        assert plan.next_run_at == fixed_now
+
+
+@pytest.mark.parametrize("mode,enabled", [("once", True), ("once", False), ("interval", True), ("interval", False)])
+def test_manual_run_schedule_semantics_preserve_explicit_disabled_state(session, monkeypatch, mode, enabled):
+    from app.services import collection_management
+
+    plan, _ = create_plan(session, CONFIG, definition([shop(session).id], mode=mode, enabled=enabled), uuid4())
+    fixed_now = database_now(session)
+    monkeypatch.setattr(collection_management, "database_now", lambda db: fixed_now)
+    request_id = uuid4()
+    run, created = run_plan(session, CONFIG, plan.id, request_id)
+    assert created and run.scheduled_for == fixed_now
+    if mode == "interval" and enabled:
+        assert plan.enabled and plan.next_run_at == fixed_now + timedelta(hours=1)
+    else:
+        assert not plan.enabled and plan.next_run_at is None
+    expected_due = plan.next_run_at
+    monkeypatch.setattr(collection_management, "database_now", lambda db: fixed_now + timedelta(minutes=1))
+    replay, created = run_plan(session, CONFIG, plan.id, request_id)
+    assert not created and replay.id == run.id and plan.next_run_at == expected_due
+
+
+def test_archive_restoration_preserves_history_and_fences_new_work(session):
+    plan, _ = create_plan(session, CONFIG, definition([shop(session).id]), uuid4())
+    request_id = uuid4()
+    run, _ = run_plan(session, CONFIG, plan.id, request_id)
+    original = session.scalar(select(CrawlTask).join(CollectionRunTask, CollectionRunTask.task_id == CrawlTask.id)
+                              .where(CollectionRunTask.run_id == run.id))
+    archived, changed = set_plan_archived(session, CONFIG, plan.id, True)
+    archived_at = archived.archived_at
+    assert changed and archived_at is not None and not archived.enabled and archived.next_run_at is None
+    assert original.status == TaskStatus.PENDING
+    assert not set_plan_archived(session, CONFIG, plan.id, True)[1]
+    assert plan.archived_at == archived_at
+    assert enqueue_due_collection_plans(session, CONFIG) == 0
+    assert run_plan(session, CONFIG, plan.id, request_id)[0].id == run.id
+    with pytest.raises(ManagementError, match="collection_plan_archived"):
+        run_plan(session, CONFIG, plan.id, uuid4())
+    with pytest.raises(ManagementError, match="collection_plan_archived"):
+        update_plan(session, CONFIG, plan.id, {"enabled": True})
+    assert cancel_task(session, CONFIG, original.task_id)[1]
+    with pytest.raises(ManagementError, match="collection_plan_archived"):
+        retry_task(session, CONFIG, original.task_id)
+    assert run_summary(session, run)["status_counts"] == {TaskStatus.CANCELLED: 1}
+    assert session.scalar(select(func.count()).select_from(CollectionRun)) == 1
+    restored, changed = set_plan_archived(session, CONFIG, plan.id, False)
+    assert changed and restored.archived_at is None and not restored.enabled and restored.next_run_at is None
+    assert not set_plan_archived(session, CONFIG, plan.id, False)[1]
+    assert enqueue_due_collection_plans(session, CONFIG) == 0
+    retry, created = retry_task(session, CONFIG, original.task_id)
+    assert created
+    set_plan_archived(session, CONFIG, plan.id, True)
+    # Replaying a previously accepted retry reads history; it creates no work.
+    assert retry_task(session, CONFIG, original.task_id) == (retry, False)
+    retry.status = TaskStatus.DEAD
+    session.flush()
+    with pytest.raises(ManagementError, match="collection_plan_archived"):
+        retry_task(session, CONFIG, retry.task_id)
+    actions = list(session.scalars(select(CollectionOperation.action).where(CollectionOperation.target_type == "plan")
+                                   .order_by(CollectionOperation.id)))
+    assert actions == ["plan_created", "plan_run", "plan_archived", "plan_restored", "plan_archived"]
+
+
+def test_plan_filters_archive_routes_and_once_edit_are_market_scoped(session, mysql_engine):
+    store, foreign = shop(session), shop(session, region="GB")
+    once, _ = create_plan(session, CONFIG, {**definition([store.id], mode="once"), "name": "Retail_100%"}, uuid4())
+    interval, _ = create_plan(session, CONFIG, {**definition([store.id]), "name": "RetailX100Y"}, uuid4())
+    item = product(session, store)
+    snapshot, _ = create_plan(session, CONFIG, definition([item.id], kind=TaskType.PRODUCT_SNAPSHOT, enabled=False), uuid4())
+    foreign_plan = CollectionPlan(platform=CONFIG.platform, region="GB", request_key=uuid4().hex * 2,
+        request_hash=uuid4().hex * 2, **definition([foreign.id]), next_run_at=database_now(session))
+    session.add(foreign_plan)
+    session.flush()
+    factory = sessionmaker(bind=session.bind, expire_on_commit=False, join_transaction_mode="create_savepoint")
+    with TestClient(create_app(CONFIG, mysql_engine)) as client:
+        client.app.state.factory = factory
+        due = once.next_run_at.isoformat().replace("+00:00", "Z")
+        response = client.patch(PREFIX + f"/plans/{once.id}", json={"name": "Retail_100%", "interval_seconds": None}, headers=AUTH)
+        assert response.status_code == 200 and response.json()["next_run_at"].replace("+00:00", "Z") == due
+        values = client.get(PREFIX + "/plans", params={"q": "_100%"}).json()["items"]
+        assert [value["id"] for value in values] == [str(once.id)]
+        values = client.get(PREFIX + "/plans", params={"task_type": "product_snapshot", "enabled": False}).json()["items"]
+        assert [value["id"] for value in values] == [str(snapshot.id)]
+        values = client.get(PREFIX + "/plans", params={"q": str(interval.id)}).json()["items"]
+        assert [value["id"] for value in values] == [str(interval.id)]
+        response = client.post(PREFIX + f"/plans/{once.id}/archive", json={})
+        assert response.status_code == 401
+        response = client.post(PREFIX + f"/plans/{once.id}/archive", json={}, headers=AUTH)
+        assert response.status_code == 200 and response.json()["changed"] and response.json()["plan"]["archived_at"]
+        assert not client.post(PREFIX + f"/plans/{once.id}/archive", json={}, headers=AUTH).json()["changed"]
+        assert str(once.id) not in {value["id"] for value in client.get(PREFIX + "/plans").json()["items"]}
+        assert [value["id"] for value in client.get(PREFIX + "/plans", params={"archived": True}).json()["items"]] == [str(once.id)]
+        assert client.get(PREFIX + f"/plans/{once.id}").status_code == 200
+        assert client.patch(PREFIX + f"/plans/{once.id}", json={"enabled": True}, headers=AUTH).status_code == 409
+        assert client.post(PREFIX + f"/plans/{foreign_plan.id}/archive", json={}, headers=AUTH).status_code == 404
+        assert client.get(PREFIX + f"/plans/{foreign_plan.id}").status_code == 404
+        response = client.post(PREFIX + f"/plans/{once.id}/restore", json={}, headers=AUTH)
+        assert response.json()["changed"] and not response.json()["plan"]["enabled"]
+        assert response.json()["plan"]["archived_at"] is None and response.json()["plan"]["next_run_at"] is None
+        first = client.get(PREFIX + "/plans", params={"limit": 1}).json()
+        second = client.get(PREFIX + "/plans", params={"limit": 1, "before_id": first["next_before_id"]}).json()
+        assert first["items"][0]["id"] != second["items"][0]["id"]
+
+
+def test_resource_picker_uses_bounded_scalar_projection_and_distinguishes_eligibility(session):
+    store = shop(session)
+    store.profile_field_state = {"private_fixture": "should not be loaded"}
+    complete, incomplete = product(session, store), product(session, store)
+    incomplete.last_success_at = None
+    incomplete.description = "should not be loaded"
+    incomplete.raw_attributes = {"should": "not be loaded"}
+    incomplete.color_summary = ["not selected"]
+    foreign = product(session, shop(session, region="GB"))
+    session.flush()
+    statements = []
+    def capture(connection, cursor, statement, parameters, context, many):
+        if statement.lstrip().upper().startswith("SELECT"):
+            statements.append(statement)
+    event.listen(session.bind, "before_cursor_execute", capture)
+    try:
+        first = list_resources(session, CONFIG, TaskType.PRODUCT_SNAPSHOT, limit=1)
+    finally:
+        event.remove(session.bind, "before_cursor_execute", capture)
+    assert len(statements) == 1
+    assert all(name not in statements[0] for name in ("raw_attributes", "description", "color_summary", "profile_field_state"))
+    assert first["items"] == [{"id": str(incomplete.id), "name": incomplete.title, "platform_id": incomplete.platform_product_id,
+        "shop_name": store.canonical_name, "eligible": False, "eligibility_reason": "detail_not_collected"}]
+    assert first["next_before_id"] == str(incomplete.id)
+    second = list_resources(session, CONFIG, TaskType.PRODUCT_SNAPSHOT, limit=1, before_id=int(first["next_before_id"]))
+    assert second["items"][0]["id"] == str(complete.id) and second["items"][0]["eligible"]
+    assert second["next_before_id"] is None
+    echoed = list_resources(session, CONFIG, TaskType.PRODUCT_DETAIL, ids=[str(incomplete.id), str(foreign.id)], limit=1)
+    assert len(echoed["items"]) == 1 and echoed["items"][0]["eligible"] and echoed["next_before_id"] is None
+    settings = replace(CONFIG, enabled_task_types=(*CONFIG.enabled_task_types, TaskType.PRODUCT_REVIEWS))
+    assert list_resources(session, settings, TaskType.PRODUCT_REVIEWS, ids=[str(incomplete.id)])["items"][0]["eligible"]
+    incomplete.currency = "GBP"
+    session.flush()
+    assert list_resources(session, CONFIG, TaskType.PRODUCT_DETAIL, ids=[str(incomplete.id)])["items"][0]["eligibility_reason"] == "unsupported_currency"
+    incomplete.currency, incomplete.pricing_context = "USD", "member_only"
+    session.flush()
+    assert list_resources(session, CONFIG, TaskType.PRODUCT_DETAIL, ids=[str(incomplete.id)])["items"][0]["eligibility_reason"] == "unsupported_pricing_context"
+    assert list_resources(session, settings, TaskType.PRODUCT_REVIEWS, ids=[str(incomplete.id)])["items"][0]["eligible"]
+    store.canonical_url = None
+    session.flush()
+    assert list_resources(session, CONFIG, TaskType.PRODUCT_DISCOVERY, ids=[str(store.id)])["items"][0]["eligibility_reason"] == "invalid_source_url"
+    assert list_resources(session, replace(CONFIG, enabled_task_types=()), TaskType.SHOP_PROFILE,
+                          ids=[str(store.id)])["items"][0]["eligibility_reason"] == "collector_not_enabled"
+
+
+def test_resource_picker_api_search_echo_and_bounds(session, mysql_engine):
+    stores = [shop(session), shop(session), shop(session)]
+    foreign = shop(session, region="GB")
+    stores[0].canonical_name, stores[1].canonical_name = "Store_100%", "StoreX100Y"
+    session.flush()
+    factory = sessionmaker(bind=session.bind, expire_on_commit=False, join_transaction_mode="create_savepoint")
+    with TestClient(create_app(CONFIG, mysql_engine)) as client:
+        client.app.state.factory = factory
+        response = client.get(PREFIX + "/resources", params={"task_type": "shop_profile", "q": "_100%"})
+        assert response.status_code == 200
+        assert [row["id"] for row in response.json()["items"]] == [str(stores[0].id)]
+        response = client.get(PREFIX + "/resources", params={"task_type": "product_discovery", "q": stores[1].platform_shop_id})
+        assert [row["id"] for row in response.json()["items"]] == [str(stores[1].id)]
+        params = [("task_type", "shop_profile"), ("limit", "1"), ("ids", str(stores[0].id)),
+                  ("ids", str(stores[2].id)), ("ids", str(foreign.id))]
+        response = client.get(PREFIX + "/resources", params=params)
+        assert response.status_code == 200 and response.json()["next_before_id"] is None
+        assert {row["id"] for row in response.json()["items"]} == {str(stores[0].id), str(stores[2].id)}
+        for extra in [("q", "Store"), ("before_id", "5"), ("ids", str(stores[0].id)), ("ids", "18446744073709551616")]:
+            assert client.get(PREFIX + "/resources", params=[*params, extra]).status_code == 422
+        assert client.get(PREFIX + "/resources", params={"task_type": "shop_profile", "ids": ["1"] * 101}).status_code == 422
+        assert client.get(PREFIX + "/resources", params={"task_type": "shop_profile", "limit": 51}).status_code == 422
+        assert client.get(PREFIX + "/resources", params={"task_type": "shop_discovery"}).status_code == 422
+        assert client.get(PREFIX + "/resources", params={"task_type": "shop_profile", "q": "9" * 80}).status_code == 200
+
+
+def test_archive_migration_upgrades_legacy_data_and_keeps_012_rerunnable(mysql_engine, monkeypatch, capsys):
+    from scripts import migrate_collection_management as foundation, migrate_collection_plan_archive as archive
+
+    saved = Path(__file__).resolve().parents[1] / "migrations/015_collection_plan_archive.sql"
+    assert saved.read_text(encoding="utf-8") == archive.additive_sql()
+    factory = make_session_factory(mysql_engine)
+    with session_scope(factory) as db:
+        store = shop(db)
+        store_id = store.id
+        plan, _ = create_plan(db, CONFIG, definition([store.id]), uuid4())
+        plan_id = plan.id
+        run, _ = run_plan(db, CONFIG, plan.id, uuid4())
+        run_id, due, name, resource_ids = run.id, plan.next_run_at, plan.name, plan.resource_ids
+        task_id = db.scalar(select(CollectionRunTask.task_id).where(CollectionRunTask.run_id == run.id))
+    try:
+        with mysql_engine.begin() as connection:
+            connection.exec_driver_sql("ALTER TABLE collection_plans DROP COLUMN archived_at")
+        assert foundation.migrate(mysql_engine)["ready"]
+        assert foundation.migrate(mysql_engine, execute=True)["executed_statements"] == 0
+        assert archive.migrate(mysql_engine) == {"ready": False, "executed_statements": 0, "pending_statements": 1, "data_rows_modified": 0}
+        monkeypatch.setattr(archive, "make_engine", lambda: mysql_engine)
+        assert archive.main(["--check"]) == 1
+        assert archive.main(["--execute"]) == 0
+        assert archive.main(["--check"]) == 0
+        assert archive.migrate(mysql_engine, execute=True)["executed_statements"] == 0
+        assert foundation.migrate(mysql_engine)["ready"]
+        assert foundation.migrate(mysql_engine, execute=True)["executed_statements"] == 0
+        with factory() as db:
+            persisted = db.get(CollectionPlan, plan_id)
+            assert persisted.archived_at is None and persisted.enabled
+            assert (persisted.name, persisted.resource_ids, persisted.next_run_at) == (name, resource_ids, due)
+            assert run_summary(db, db.get(CollectionRun, run_id))["task_count"] == 1
+        output = capsys.readouterr().out
+        assert '"ready": false' in output and '"ready": true' in output
+    finally:
+        archive.migrate(mysql_engine, execute=True)
+        with session_scope(factory) as db:
+            db.execute(delete(CollectionOperation).where(CollectionOperation.target_type == "plan", CollectionOperation.target_id == str(plan_id)))
+            db.execute(delete(CollectionRunTask).where(CollectionRunTask.run_id == run_id))
+            db.execute(delete(CollectionRun).where(CollectionRun.id == run_id))
+            db.execute(delete(CollectionPlan).where(CollectionPlan.id == plan_id))
+            db.execute(delete(CrawlTask).where(CrawlTask.id == task_id))
+            db.execute(delete(Shop).where(Shop.id == store_id))
+
+
+def test_historical_management_migration_creates_missing_tables_before_archive(mysql_engine):
+    from scripts import migrate_collection_management as foundation, migrate_collection_plan_archive as archive
+
+    # This engine belongs to conftest's uniquely named disposable test database.
+    # Only empty management tables are removed to exercise a fresh 012 install.
+    names = ("collection_run_tasks", "collection_runs", "collection_plans", "collection_operations", "collection_controls")
+    with mysql_engine.begin() as connection:
+        assert all(connection.scalar(text(f"SELECT COUNT(*) FROM {name}")) == 0 for name in names)
+        source_counts = {name: connection.scalar(text(f"SELECT COUNT(*) FROM {name}")) for name in ("shops", "products", "crawl_tasks")}
+        for name in names:
+            connection.exec_driver_sql(f"DROP TABLE {name}")
+    try:
+        assert not foundation.migrate(mysql_engine)["ready"]
+        assert foundation.migrate(mysql_engine, execute=True)["ready"]
+        assert foundation.migrate(mysql_engine, execute=True)["executed_statements"] == 0
+        assert "archived_at" not in {column["name"] for column in inspect(mysql_engine).get_columns("collection_plans")}
+        assert archive.migrate(mysql_engine, execute=True)["ready"]
+        assert foundation.migrate(mysql_engine)["ready"]
+        with mysql_engine.connect() as connection:
+            assert all(connection.scalar(text(f"SELECT COUNT(*) FROM {name}")) == count for name, count in source_counts.items())
+    finally:
+        foundation.migrate(mysql_engine, execute=True)
+        archive.migrate(mysql_engine, execute=True)

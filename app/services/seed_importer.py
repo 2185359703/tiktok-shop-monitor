@@ -139,7 +139,7 @@ def ensure_seed_task(session: Session, seed: SeedShopObservation, now: datetime)
     key = seed_task_key(seed.row_hash)
     existing = session.scalar(select(CrawlTask.id).where(
         CrawlTask.idempotency_key == key
-    ).with_for_update())
+    ).with_for_update(nowait=True))
     if existing is not None or seed.resolution_status != ResolutionStatus.PENDING:
         return False
     session.add(CrawlTask(

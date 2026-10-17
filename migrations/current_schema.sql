@@ -57,6 +57,65 @@ CREATE TABLE IF NOT EXISTS analytics_snapshots (
 	CONSTRAINT pk_analytics_snapshots PRIMARY KEY (schema_version, key_hash)
 ) ENGINE=InnoDB CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='原子发布的小型图表统计；重建期间保留上一成功结果';
 
+CREATE TABLE IF NOT EXISTS collection_alert_evaluations (
+	platform VARCHAR(32) COLLATE utf8mb4_bin NOT NULL COMMENT '来源平台',
+	region VARCHAR(2) COLLATE utf8mb4_bin NOT NULL COMMENT '市场',
+	last_observed_at DATETIME(6) COMMENT '最近接受的监控观测时间UTC；防迟到评估覆盖',
+	last_evaluated_at DATETIME(6) COMMENT '最近成功持久评估时间UTC',
+	sources JSON NOT NULL COMMENT '各来源可用性，避免未知被解释为恢复',
+	CONSTRAINT pk_collection_alert_evaluations PRIMARY KEY (platform, region)
+) ENGINE=InnoDB CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='市场级评估串行锁与新鲜度；独立后台运行，不依赖页面访问';
+
+CREATE TABLE IF NOT EXISTS collection_alerts (
+	code VARCHAR(64) NOT NULL COMMENT '固定告警规则代码',
+	severity VARCHAR(16) NOT NULL COMMENT 'info、warning或critical',
+	message VARCHAR(255) NOT NULL COMMENT '固定规则生成的安全描述，不存请求和原始异常',
+	status VARCHAR(16) NOT NULL COMMENT 'open未确认，acknowledged已确认，resolved已恢复',
+	first_seen_at DATETIME(6) NOT NULL COMMENT '首次观测到条件成立时间UTC',
+	opened_at DATETIME(6) NOT NULL COMMENT '本轮告警开始时间UTC',
+	last_seen_at DATETIME(6) NOT NULL COMMENT '最近观测到条件成立时间UTC',
+	last_evaluated_at DATETIME(6) NOT NULL COMMENT '该规则最近可判断时间UTC；来源未知时不推进',
+	condition_known BOOL NOT NULL COMMENT '最新后台评估能否判断该规则；未知不作恢复',
+	acknowledged_at DATETIME(6) COMMENT '本轮操作员确认时间UTC；重开清空',
+	resolved_at DATETIME(6) COMMENT '本轮条件恢复时间UTC；重开清空',
+	occurrences BIGINT UNSIGNED NOT NULL COMMENT '累计告警轮次数；持续成立不累加',
+	id BIGINT UNSIGNED NOT NULL COMMENT '数据库内部自增主键' AUTO_INCREMENT,
+	platform VARCHAR(32) COLLATE utf8mb4_bin NOT NULL COMMENT '数据来源平台，默认 tiktok_shop' DEFAULT 'tiktok_shop',
+	region VARCHAR(2) COLLATE utf8mb4_bin NOT NULL COMMENT '市场区域代码，例如 US；统一使用大写',
+	CONSTRAINT pk_collection_alerts PRIMARY KEY (id),
+	CONSTRAINT uq_collection_alert_market_code UNIQUE (platform, region, code),
+	CONSTRAINT ck_collection_alerts_status CHECK (status IN ('open','acknowledged','resolved')),
+	CONSTRAINT ck_collection_alerts_severity CHECK (severity IN ('info','warning','critical'))
+) ENGINE=InnoDB CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='同市场固定规则唯一的持久告警现态；确认不等于故障恢复';
+
+CREATE INDEX ix_collection_alert_status ON collection_alerts (platform, region, status, id);
+
+CREATE TABLE IF NOT EXISTS collection_attempt_facts (
+	schema_version INTEGER NOT NULL COMMENT '派生结构版本',
+	attempt_id BIGINT UNSIGNED NOT NULL COMMENT '源尝试主键与幂等键；不是完成水位',
+	platform VARCHAR(32) COLLATE utf8mb4_bin NOT NULL COMMENT '来源平台',
+	region VARCHAR(2) COLLATE utf8mb4_bin NOT NULL COMMENT '市场',
+	task_id VARCHAR(36) NOT NULL COMMENT '任务业务UUID',
+	task_type VARCHAR(32) NOT NULL COMMENT '任务类型；来源与本地处理分别统计',
+	task_group VARCHAR(8) NOT NULL COMMENT '来源采集source或本地处理local；支持有界失败明细',
+	attempt_no INTEGER NOT NULL COMMENT '任务尝试序号',
+	worker_id VARCHAR(128) COMMENT '执行实例标识',
+	finished_at DATETIME(6) NOT NULL COMMENT '源尝试完成时间UTC',
+	succeeded BOOL NOT NULL COMMENT '业务尝试是否成功',
+	error_type VARCHAR(64) COMMENT '白名单格式错误分类；不含异常详情',
+	response_status INTEGER COMMENT 'HTTP响应状态',
+	duration_us BIGINT UNSIGNED NOT NULL COMMENT '完整执行耗时微秒；非HTTP单次延迟',
+	processed BOOL NOT NULL COMMENT '是否与分钟计数同事务完成投影' DEFAULT '0',
+	CONSTRAINT pk_collection_attempt_facts PRIMARY KEY (schema_version, attempt_id),
+	CONSTRAINT ck_collection_attempt_facts_task_group CHECK (task_group IN ('source','local'))
+) ENGINE=InnoDB CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='与尝试完成同事务写入的幂等事实；仅保留监控所需安全字段';
+
+CREATE INDEX ix_collection_facts_failures ON collection_attempt_facts (schema_version, platform, region, succeeded, finished_at, attempt_id);
+
+CREATE INDEX ix_collection_facts_group_failures ON collection_attempt_facts (schema_version, platform, region, task_group, succeeded, finished_at, attempt_id);
+
+CREATE INDEX ix_collection_facts_pending ON collection_attempt_facts (schema_version, platform, region, processed, finished_at, attempt_id);
+
 CREATE TABLE IF NOT EXISTS collection_controls (
 	paused BOOL NOT NULL COMMENT '暂停领取新的来源任务；已有租约允许完成' DEFAULT '0',
 	id BIGINT UNSIGNED NOT NULL COMMENT '数据库内部自增主键' AUTO_INCREMENT,
@@ -67,6 +126,64 @@ CREATE TABLE IF NOT EXISTS collection_controls (
 	CONSTRAINT pk_collection_controls PRIMARY KEY (id),
 	CONSTRAINT uq_collection_controls_market UNIQUE (platform, region)
 ) ENGINE=InnoDB CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='持久化的人工采集暂停开关；独立于来源访问保护冷却';
+
+CREATE TABLE IF NOT EXISTS collection_launches (
+	request_key CHAR(64) CHARACTER SET ascii COLLATE ascii_bin NOT NULL COMMENT '市场与提交UUID生成的唯一幂等键',
+	request_hash CHAR(64) CHARACTER SET ascii COLLATE ascii_bin NOT NULL COMMENT '规范化采集定义摘要；同一请求不能改变范围',
+	name VARCHAR(80) NOT NULL COMMENT '用户可识别的批次名称',
+	task_type VARCHAR(32) NOT NULL COMMENT '本批次最初派发的来源任务类型',
+	requested_count INTEGER NOT NULL COMMENT '明确提交且去重后的资源或店铺链接数量',
+	created_task_count INTEGER NOT NULL COMMENT '本次新建的根任务数量' DEFAULT '0',
+	reused_task_count INTEGER NOT NULL COMMENT '复用已存在根任务的数量；不表示新增来源请求' DEFAULT '0',
+	max_pages INTEGER COMMENT '每个资源的分页上限；仅商品发现与评论适用',
+	cancel_requested_at DATETIME(6) COMMENT '持久取消请求时间；阻止独占后续任务开始',
+	cancel_completed_at DATETIME(6) COMMENT '当前关联的活动任务全部结束时间；保留共享任务的实际执行历史',
+	cancel_pending BOOL NOT NULL COMMENT '是否仍需有界清理；共享任务活动时保留检查资格' DEFAULT '0',
+	cancel_checked_at DATETIME(6) COMMENT '最近清理检查时间；用于公平轮转而非始终重复最早的批次',
+	id BIGINT UNSIGNED NOT NULL COMMENT '数据库内部自增主键' AUTO_INCREMENT,
+	platform VARCHAR(32) COLLATE utf8mb4_bin NOT NULL COMMENT '数据来源平台，默认 tiktok_shop' DEFAULT 'tiktok_shop',
+	region VARCHAR(2) COLLATE utf8mb4_bin NOT NULL COMMENT '市场区域代码，例如 US；统一使用大写',
+	created_at DATETIME(6) NOT NULL COMMENT '记录创建时间（UTC，微秒精度）' DEFAULT CURRENT_TIMESTAMP(6),
+	CONSTRAINT pk_collection_launches PRIMARY KEY (id),
+	CONSTRAINT uq_collection_launches_request UNIQUE (request_key),
+	CONSTRAINT ck_collection_launches_requested_count CHECK (requested_count BETWEEN 1 AND 100),
+	CONSTRAINT ck_collection_launches_task_type CHECK (task_type IN ('shop_discovery', 'product_discovery', 'product_detail', 'product_reviews'))
+) ENGINE=InnoDB CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='人工明确范围的一次性采集批次；保存幂等结果与真实任务链路';
+
+CREATE INDEX ix_collection_launches_cancellation ON collection_launches (platform, region, cancel_pending, cancel_checked_at, id);
+
+CREATE INDEX ix_collection_launches_market ON collection_launches (platform, region, id);
+
+CREATE TABLE IF NOT EXISTS collection_minute_rollups (
+	minute_at DATETIME(6) NOT NULL COMMENT 'UTC分钟起点，左闭右开',
+	task_type VARCHAR(32) NOT NULL COMMENT '任务类型',
+	completed BIGINT UNSIGNED NOT NULL COMMENT '完成尝试总数',
+	succeeded BIGINT UNSIGNED NOT NULL COMMENT '成功尝试总数',
+	duration_us BIGINT UNSIGNED NOT NULL COMMENT '完整执行耗时总和微秒',
+	histogram JSON NOT NULL COMMENT '1.1倍几何耗时直方图；P95取桶上界',
+	errors JSON NOT NULL COMMENT '安全错误分类计数',
+	schema_version INTEGER NOT NULL COMMENT '可重建统计结构版本',
+	platform VARCHAR(32) COLLATE utf8mb4_bin NOT NULL COMMENT '来源平台',
+	region VARCHAR(2) COLLATE utf8mb4_bin NOT NULL COMMENT '市场',
+	CONSTRAINT pk_collection_minute_rollups PRIMARY KEY (schema_version, platform, region, minute_at, task_type),
+	CONSTRAINT ck_collection_minute_rollups_success_count CHECK (succeeded <= completed)
+) ENGINE=InnoDB CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='每市场每任务类型分钟统计；准确计数与耗时和，直方图分位数为显式近似';
+
+CREATE TABLE IF NOT EXISTS collection_monitor_states (
+	activated_at DATETIME(6) NOT NULL COMMENT '新写入器已启用后的激活时间UTC',
+	coverage_since DATETIME(6) NOT NULL COMMENT '当前回填或修复覆盖起点UTC',
+	backfill_until DATETIME(6) NOT NULL COMMENT '当前回填或修复固定终点UTC，不随重启改变',
+	cursor_finished_at DATETIME(6) COMMENT '按完成时间排序的历史回填游标',
+	cursor_attempt_id BIGINT UNSIGNED COMMENT '相同完成时间的分页辅助键，不是完成水位',
+	backfill_complete BOOL NOT NULL COMMENT '固定历史区间是否已完整扫描' DEFAULT '0',
+	generation BIGINT UNSIGNED NOT NULL COMMENT '完整统计快照发布代数' DEFAULT '0',
+	last_progress_at DATETIME(6) NOT NULL COMMENT '后台最近成功处理时间',
+	published_at DATETIME(6) COMMENT '最近完整快照发布时间',
+	schema_version INTEGER NOT NULL COMMENT '可重建统计结构版本',
+	platform VARCHAR(32) COLLATE utf8mb4_bin NOT NULL COMMENT '来源平台',
+	region VARCHAR(2) COLLATE utf8mb4_bin NOT NULL COMMENT '市场',
+	CONSTRAINT pk_collection_monitor_states PRIMARY KEY (schema_version, platform, region)
+) ENGINE=InnoDB CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='新写入器切换后显式激活的可恢复监控回填进度；缺失代表未激活';
 
 CREATE TABLE IF NOT EXISTS collection_operations (
 	action VARCHAR(32) NOT NULL COMMENT '固定操作分类',
@@ -91,6 +208,7 @@ CREATE TABLE IF NOT EXISTS collection_plans (
 	schedule_mode VARCHAR(16) NOT NULL COMMENT 'once=单次，interval=周期',
 	interval_seconds INTEGER COMMENT '周期秒数；单次计划为空',
 	enabled BOOL NOT NULL COMMENT '是否允许调度器自动生成本计划的新执行' DEFAULT '1',
+	archived_at DATETIME(6) COMMENT '归档时间；归档计划保留历史且禁止新派发，恢复后保持停用',
 	next_run_at DATETIME(6) COMMENT '下一逻辑执行时间；遗漏周期合并为一次',
 	last_run_at DATETIME(6) COMMENT '最近生成执行记录的时间',
 	id BIGINT UNSIGNED NOT NULL COMMENT '数据库内部自增主键' AUTO_INCREMENT,
@@ -303,6 +421,35 @@ CREATE TABLE IF NOT EXISTS shops (
 ) ENGINE=InnoDB CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='已确认平台身份的正式店铺与当前指标';
 
 CREATE INDEX ix_shops_market_status ON shops (region, status, discovery_category);
+
+CREATE TABLE IF NOT EXISTS collection_alert_events (
+	alert_id BIGINT UNSIGNED NOT NULL COMMENT '所属持久告警主键',
+	event_type VARCHAR(16) NOT NULL COMMENT 'opened、acknowledged、resolved或reopened',
+	status VARCHAR(16) NOT NULL COMMENT '事件后的告警状态',
+	occurred_at DATETIME(6) NOT NULL COMMENT '状态迁移时间UTC',
+	occurrence BIGINT UNSIGNED NOT NULL COMMENT '所属告警轮次',
+	message VARCHAR(255) NOT NULL COMMENT '当时安全描述；不记录凭据或个人信息',
+	id BIGINT UNSIGNED NOT NULL COMMENT '数据库内部自增主键' AUTO_INCREMENT,
+	CONSTRAINT pk_collection_alert_events PRIMARY KEY (id),
+	CONSTRAINT ck_collection_alert_events_event_type CHECK (event_type IN ('opened','acknowledged','resolved','reopened')),
+	CONSTRAINT fk_collection_alert_events_alert_id_collection_alerts FOREIGN KEY(alert_id) REFERENCES collection_alerts (id) ON DELETE RESTRICT
+) ENGINE=InnoDB CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='只记录告警状态迁移的历史；重复评估不产生重复事件';
+
+CREATE INDEX ix_collection_alert_events_history ON collection_alert_events (alert_id, id);
+
+CREATE TABLE IF NOT EXISTS collection_launch_tasks (
+	launch_id BIGINT UNSIGNED NOT NULL COMMENT '所属人工采集批次内部ID',
+	task_id BIGINT UNSIGNED NOT NULL COMMENT '准确关联的任务内部ID',
+	member_role VARCHAR(16) NOT NULL COMMENT 'root为原始根任务，descendant为后续任务，retry为补采任务',
+	id BIGINT UNSIGNED NOT NULL COMMENT '数据库内部自增主键' AUTO_INCREMENT,
+	CONSTRAINT pk_collection_launch_tasks PRIMARY KEY (id),
+	CONSTRAINT uq_collection_launch_tasks_member UNIQUE (launch_id, task_id),
+	CONSTRAINT ck_collection_launch_tasks_member_role CHECK (member_role IN ('root', 'descendant', 'retry')),
+	CONSTRAINT fk_collection_launch_tasks_launch_id_collection_launches FOREIGN KEY(launch_id) REFERENCES collection_launches (id) ON DELETE RESTRICT,
+	CONSTRAINT fk_collection_launch_tasks_task_id_crawl_tasks FOREIGN KEY(task_id) REFERENCES crawl_tasks (id) ON DELETE RESTRICT
+) ENGINE=InnoDB CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='一次性采集的根任务、后续分页处理及保留历史的重试成员';
+
+CREATE INDEX ix_collection_launch_tasks_task ON collection_launch_tasks (task_id);
 
 CREATE TABLE IF NOT EXISTS collection_runs (
 	plan_id BIGINT UNSIGNED NOT NULL COMMENT '所属采集计划',

@@ -4,6 +4,7 @@ x-analysis: &analysis
   image: ${ANALYTICS_IMAGE:?Set ANALYTICS_IMAGE to the frozen application image}
   environment:
     DATABASE_URL: ${DATABASE_URL:?Set DATABASE_URL}
+    REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
     SETTINGS_FILE: /opt/tiktok-shop-monitor/configs/server.toml
     ANALYTICS_ENABLED: "1"
     ANALYTICS_CONCURRENCY: ${ANALYTICS_CONCURRENCY:-1}

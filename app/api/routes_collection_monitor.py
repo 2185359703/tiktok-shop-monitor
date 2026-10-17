@@ -8,7 +8,7 @@ from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import JSONResponse
 
 from app.services.collection_heartbeat import read_runtime
-from app.services.collection_monitor import WINDOWS, monitor_alerts, read_monitor
+from app.services.collection_monitor import WINDOWS, GROUPS, monitor_alerts, read_monitor
 from app.storage.async_database import app_call
 
 
@@ -45,9 +45,10 @@ class MonitorCache:
 
 
 @router.get("/monitor")
-async def monitor(request: Request, window_minutes: Annotated[int, Query(ge=15, le=1440)] = 60):
-    if window_minutes not in WINDOWS:
-        raise HTTPException(422, "invalid_monitor_window")
+async def monitor(request: Request, window_minutes: Annotated[int, Query(ge=15, le=1440)] = 60,
+                  task_group: str = "source"):
+    if window_minutes not in WINDOWS or task_group not in GROUPS:
+        raise HTTPException(422, "invalid_monitor_window_or_group")
     settings = request.app.state.settings
     cache = getattr(request.app.state, "collection_monitor_cache", None)
     if cache is None:
@@ -56,11 +57,12 @@ async def monitor(request: Request, window_minutes: Annotated[int, Query(ge=15, 
     async def build():
         def query():
             with request.app.state.factory() as db:
-                return read_monitor(db, settings, window_minutes)
+                return read_monitor(db, settings, window_minutes, task_group=task_group)
         data, runtime = await asyncio.gather(app_call(request, query), read_runtime(settings))
         data["runtime"] = runtime
-        data["alerts"] = monitor_alerts(data, scheduler_poll_seconds=settings.poll_seconds)
+        data["alerts"] = monitor_alerts(data, scheduler_poll_seconds=settings.poll_seconds,
+            expected_workers=settings.monitor_expected_workers, expected_schedulers=settings.monitor_expected_schedulers)
         return data
 
-    data = await cache.get(window_minutes, build)
+    data = await cache.get((window_minutes, task_group), build)
     return JSONResponse(data, headers={"Cache-Control": "no-store"})

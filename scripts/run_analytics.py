@@ -12,6 +12,8 @@ from app.services.analytics_refresh import HEAVY_KINDS, LIGHT_KINDS, SUMMARY_KIN
 from app.services.analytics_runtime import backfill_batch, maintain, ready, tables_ready
 from app.services.analytics_rollup import backfill_rollups, rollups_ready
 from app.services.async_analytics import AsyncAnalyticsRunner
+from app.services.collection_rollups import advance_rollups
+from app.services.collection_alerts import EVALUATION_INTERVAL_SECONDS, evaluate_runtime_once
 from app.settings import Settings
 from app.storage.async_database import AsyncDatabase, make_async_engine
 from scripts.async_runtime import pause_until_stop
@@ -58,9 +60,31 @@ async def run(config, args):
                 processed = await heavy_runner.run_once(slot_name="analysis_summary" if summaries else "analysis_heavy",
                     only_kinds=SUMMARY_KINDS if summaries else HEAVY_KINDS, default_statistics=summaries)
                 await pause_until_stop(stop, .1 if processed else 1)
+        async def refresh_collection_monitor():
+            while not stop.is_set():
+                try:
+                    result = await database.transaction(advance_rollups, config)
+                except Exception as error:
+                    # Telemetry failure must not stop source projections. The
+                    # API retains the last complete view and reports its age.
+                    logging.getLogger(__name__).warning("collection_monitor_refresh_failed",
+                        extra={"error_type": type(error).__name__})
+                    result = None
+                busy = bool(result and (result.get("processed") or result.get("scanned")))
+                await pause_until_stop(stop, .1 if busy else 1)
+        async def evaluate_collection_alerts():
+            while not stop.is_set():
+                try:
+                    await evaluate_runtime_once(database, config)
+                except Exception as error:
+                    logging.getLogger(__name__).warning("collection_alert_evaluation_failed",
+                        extra={"error_type": type(error).__name__})
+                await pause_until_stop(stop, EVALUATION_INTERVAL_SECONDS)
         if not args.once:
             if role in {"all", "projections"}:
                 background_workers.append(asyncio.create_task(refresh_light_resources()))
+                background_workers.append(asyncio.create_task(refresh_collection_monitor()))
+                background_workers.append(asyncio.create_task(evaluate_collection_alerts()))
             if role in {"all", "heavy"}:
                 background_workers.append(asyncio.create_task(refresh_heavy_resources()))
             if role in {"all", "summaries"}:
@@ -78,6 +102,7 @@ async def run(config, args):
                 last_backfill = time.monotonic()
             if args.once:
                 await database.transaction(maintain, config)
+                await database.transaction(advance_rollups, config)
             jobs = await asyncio.gather(*(runner.run_once(
                 only_kinds=None if args.once else ("product_projection", "event_projection"))
                                          for _ in range(config.analytics_concurrency)))

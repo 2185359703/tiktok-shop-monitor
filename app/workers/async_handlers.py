@@ -62,7 +62,7 @@ class ShopDiscoveryHandler:
             outcome, _ = resolve_seed_from_snapshot(
                 session, int(lease.resource_id), snapshot, str(path),
                 verified_store_entry=shop_id_from_url(source) is not None,
-                runtime_lease_token=lease.lease_token)
+                runtime_lease_token=lease.lease_token, runtime_task_id=lease.task_id)
             if outcome not in {"resolved", "already_processed"}:
                 # Roll back partial identity changes; the runtime records failure.
                 raise TaskFailure(Failure(f"identity_{outcome}", "来源未能确认唯一店铺身份，需要补充入口或人工核验。"))

@@ -1,0 +1,23 @@
+import {formatDate} from './api.js';
+import {collectionPager} from './collection-management-view.js';
+
+const esc=value=>String(value??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const button=(action,label,id='',disabled=false)=>`<button type="button" class="button" data-collection-action="${action}" ${id?`data-id="${esc(id)}"`:''} ${disabled?'disabled':''}>${label}</button>`;
+const labels={open:'待处理',acknowledged:'已确认',resolved:'已恢复'};
+const badge=alert=>`<span class="badge ${alert.status==='resolved'?'green':alert.status==='acknowledged'?'blue':'amber'}">${labels[alert.status]||'未知'}</span>${alert.condition_known===false?'<span class="badge amber">待确认</span>':''}`;
+const empty=message=>`<div class="empty-state compact"><h2>${esc(message)}</h2><p>记录来源采集、队列与进程的持续异常及恢复过程。</p></div>`;
+function evaluationNote(evaluation) {
+  if(!evaluation||evaluation.status==='never')return '<div class="notice" role="status">告警尚未完成首次评估，当前不判断为运行正常。</div>';
+  if(evaluation.status==='stale')return `<div class="notice warning" role="status">告警评估更新延迟，上次评估 ${esc(formatDate(evaluation.last_evaluated_at))}。未知条件不会自动标记恢复。</div>`;
+  return '';
+}
+export function renderCollectionAlerts(model,canWrite,icon) {
+  const filters=[['active','活动告警'],['open','尚未确认'],['acknowledged','已确认'],['resolved','恢复历史'],['all','全部记录']];
+  const rows=model.items.map(alert=>`<tr><td><button class="product-title" data-collection-action="alert-history" data-id="${esc(alert.id)}">${esc(alert.message)}</button><span class="cell-secondary">${esc(alert.code)} · 第 ${esc(alert.occurrences)} 次发生</span></td><td>${badge(alert)}</td><td class="event-time">${esc(formatDate(alert.opened_at))}<span class="cell-secondary">最近观察 ${esc(formatDate(alert.last_seen_at))}</span></td><td><div class="collection-row-actions">${alert.status==='open'?button('alert-ack','确认告警',alert.id,!canWrite):''}${button('alert-history','事件历史',alert.id)}</div></td></tr>`).join('');
+  return `<section class="panel collection-alert-panel"><div class="panel-header"><div><h2 class="panel-title">持续告警</h2><p class="panel-subtitle">固定使用来源采集最近 60 分钟评估，与上方窗口和分组无关</p></div>${icon('alert')}</div><div class="toolbar"><select id="collection-alert-status" aria-label="告警状态筛选">${filters.map(([key,label])=>`<option value="${key}" ${model.status===key?'selected':''}>${label}</option>`).join('')}</select><div class="collection-row-actions">${!canWrite?button('manage','连接写入令牌'):''}${button('alerts-refresh','刷新告警','',model.loading)}</div></div>${evaluationNote(model.evaluation)}${model.error?`<div class="notice warning" role="alert">${esc(model.error)}${model.loaded?' 当前保留上次结果。':''}</div>`:''}${!model.loaded&&model.loading?'<div class="loading-state compact"><span class="loader"></span><p>正在读取告警…</p></div>':rows?`<div class="table-wrap"><table><thead><tr><th>告警</th><th>状态</th><th>发生时间</th><th>操作</th></tr></thead><tbody>${rows}</tbody></table></div>`:empty(model.evaluation?.status==='fresh'?'当前筛选下没有告警':'暂无可用告警记录')}${collectionPager('alerts',model,'条告警')}<p class="collection-footnote">确认只标记已阅，不会关闭告警；条件恢复后自动记录恢复，再次发生会重新打开。</p></section>`;
+}
+
+export function renderCollectionAlertHistory(alert,model,canWrite) {
+  const events={opened:'首次发生',acknowledged:'人工确认',resolved:'条件恢复',reopened:'再次发生'};
+  return `<h2 id="dialog-title">告警事件历史</h2><p class="detail-subtitle">${esc(alert.message)}</p><div class="collection-detail-actions">${badge(alert)}${alert.status==='open'?button('alert-ack','确认告警',alert.id,!canWrite):''}${button('alert-history','刷新事件',alert.id)}</div><div class="detail-grid"><div class="detail-field"><small>首次发生</small><span>${esc(formatDate(alert.first_seen_at))}</span></div><div class="detail-field"><small>本轮发生</small><span>${esc(formatDate(alert.opened_at))}</span></div><div class="detail-field"><small>确认时间</small><span>${esc(formatDate(alert.acknowledged_at))}</span></div><div class="detail-field"><small>恢复时间</small><span>${esc(formatDate(alert.resolved_at))}</span></div></div>${evaluationNote(model.evaluation)}${alert.condition_known===false?'<div class="notice warning">当前条件尚不可判断，保留原状态等待下一次有效评估。</div>':''}${model.error?`<div class="notice warning" role="alert">${esc(model.error)}</div>`:''}${model.items.length?`<div class="table-wrap"><table><thead><tr><th>发生时间</th><th>事件</th><th>轮次</th><th>状态</th></tr></thead><tbody>${model.items.map(event=>`<tr><td class="event-time">${esc(formatDate(event.occurred_at))}</td><td>${esc(events[event.event_type]||event.event_type)}</td><td>${esc(event.occurrence)}</td><td>${esc(labels[event.status]||event.status)}</td></tr>`).join('')}</tbody></table></div>`:empty('暂无事件历史')}${collectionPager('alert-events',model,'次事件')}`;
+}

@@ -115,7 +115,9 @@ class RuntimeHeartbeat:
 async def read_runtime(settings, *, client=None, stamp=None):
     stamp = stamp or datetime.now(timezone.utc)
     empty = {"status": "not_configured", "observed_at": stamp.isoformat(),
-             "components": [], "source_cooldown_seconds": None}
+             "components": [], "source_cooldown_seconds": None,
+             "expected": {"worker": settings.monitor_expected_workers, "scheduler": settings.monitor_expected_schedulers},
+             "ready_counts": {"worker": None, "scheduler": None}}
     if client is None and not settings.redis_url:
         return empty
     owns_client = client is None
@@ -152,7 +154,11 @@ async def read_runtime(settings, *, client=None, stamp=None):
                     **safe_state(data)})
             except (ValueError, TypeError, KeyError):
                 continue
-        return {"status": "available", "observed_at": stamp.isoformat(), "components": components,
+        for component in components:
+            component["ready"] = component["status"] == "online" and component["state"] == "running"
+        return {**empty, "status": "available", "components": components,
+                "ready_counts": {role: sum(item["role"] == role and item["ready"] for item in components)
+                                 for role in ("worker", "scheduler")},
                 "source_cooldown_seconds": round(max(0, values[-1]) / 1000, 1)}
     except Exception:
         return {**empty, "status": "unavailable"}

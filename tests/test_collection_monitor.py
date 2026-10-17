@@ -16,8 +16,10 @@ from app.services.analytics_refresh import scope
 from app.services.analytics_snapshot import publish_snapshot
 from app.services.collection_heartbeat import RuntimeHeartbeat, prefix, read_runtime
 from app.services.collection_monitor import monitor_alerts, read_monitor
+from app.services.collection_rollups import activate, advance_rollups
 from app.settings import Settings
 from test_analytics import NOW, analytics_engine
+from test_collection_launch_concurrency import isolated_factory
 
 
 def task(db, identifier, *, region="US", **values):
@@ -31,7 +33,7 @@ def task(db, identifier, *, region="US", **values):
     db.flush()
 
 
-def attempt(db, identifier, task_id, *, finish=NOW, success=True, duration=2, **values):
+def attempt(db, identifier, task_id, *, finish=NOW - timedelta(seconds=1), success=True, duration=2, **values):
     defaults = dict(id=identifier, task_id=task_id, attempt_no=1, worker_id="test-worker",
         started_at=finish - timedelta(seconds=duration) if finish else NOW,
         finished_at=finish, succeeded=success, created_at=NOW,
@@ -41,22 +43,33 @@ def attempt(db, identifier, task_id, *, finish=NOW, success=True, duration=2, **
     db.flush()
 
 
-def test_window_is_scoped_by_finished_attempts_and_includes_boundaries(analytics_engine):
+def publish_statistics(db, config=None, *, stamp=NOW):
+    config = config or Settings()
+    activate(db, config, stamp=stamp)
+    for _ in range(100):
+        result = advance_rollups(db, config, stamp=stamp, force_publish=True)
+        if result["ready"]:
+            return
+    raise AssertionError("fixture_monitor_backfill_did_not_finish")
+
+
+def test_window_is_market_scoped_and_uses_complete_minutes_left_closed_right_open(analytics_engine):
     with Session(analytics_engine) as db:
         for identifier in range(1, 8):
             task(db, identifier, region="GB" if identifier == 6 else "US")
         attempt(db, 1, 1, finish=NOW - timedelta(minutes=60))
-        attempt(db, 2, 2, finish=NOW)
+        attempt(db, 2, 2, finish=NOW - timedelta(microseconds=1))
         attempt(db, 3, 3, finish=NOW - timedelta(minutes=60, microseconds=1))
-        attempt(db, 4, 4, finish=NOW + timedelta(microseconds=1))
+        attempt(db, 4, 4, finish=NOW)
         attempt(db, 5, 5, finish=None, success=None)
         attempt(db, 6, 6)
         attempt(db, 7, 7, success=False, duration=4, error_type="timeout")
+        publish_statistics(db)
         result = read_monitor(db, Settings(), 60, stamp=NOW)
         assert result["attempts"]["total"] == 3
         assert result["attempts"]["success_rate"] == 66.67
-        assert result["attempts"]["avg_duration_ms"] == 2666.7
-        assert result["attempts"]["p95_duration_ms"] == 4000
+        assert result["attempts"]["avg_duration_ms"] == 2666.667
+        assert 4000 <= result["attempts"]["p95_duration_ms"] <= 4400
         assert len(result["trend"]) == 12
         assert sum(bucket["completed"] for bucket in result["trend"]) == 3
         assert result["trend"][0]["completed"] == 1
@@ -69,6 +82,7 @@ def test_attempt_retry_semantics_and_private_data_are_not_exposed(analytics_engi
         task(db, 1)
         attempt(db, 1, 1, success=False, error_type="token=do-not-return-secret")
         attempt(db, 2, 1, attempt_no=2, success=True)
+        publish_statistics(db)
         result = read_monitor(db, Settings(), stamp=NOW)
         assert result["attempts"]["total"] == 2
         assert result["attempts"]["success_rate"] == 50
@@ -79,12 +93,17 @@ def test_attempt_retry_semantics_and_private_data_are_not_exposed(analytics_engi
 def test_empty_window_and_missing_summary_stay_unknown(analytics_engine):
     with Session(analytics_engine) as db:
         result = read_monitor(db, Settings(), stamp=NOW)
-        assert result["attempts"]["total"] == 0
+        assert result["attempts"]["total"] is None
+        assert result["statistics"]["status"] == "warming"
         assert result["attempts"]["success_rate"] is None
         assert result["attempts"]["p95_duration_ms"] is None
         assert result["queue"]["status"] == "pending"
         assert result["queue"]["total"] is None
         assert result["leases"]["items"] == []
+        publish_statistics(db)
+        result = read_monitor(db, Settings(), stamp=NOW)
+        assert result["attempts"]["total"] == 0
+        assert result["statistics"]["ready"]
 
 
 def test_queue_reuses_published_snapshot_and_preserves_its_age(analytics_engine):
@@ -95,6 +114,7 @@ def test_queue_reuses_published_snapshot_and_preserves_its_age(analytics_engine)
             {"task_type": "product_detail", "status": "succeeded", "count": 12},
             {"task_type": "shop_profile", "status": "dead", "count": 2}]}, NOW - timedelta(seconds=70))
         db.commit()
+        publish_statistics(db)
         statements = []
         def capture(conn, cursor, statement, *args):
             statements.append(statement.lower())
@@ -107,21 +127,22 @@ def test_queue_reuses_published_snapshot_and_preserves_its_age(analytics_engine)
         assert result["queue"]["age_seconds"] == 70
         assert result["queue"]["total"] == 22
         assert result["queue"]["active"] == 8 and result["queue"]["failed"] == 2
-        assert len(statements) == 3
+        assert len(statements) == 4
         assert not any("count(" in sql or "group by" in sql for sql in statements)
+        assert all("crawl_attempts" not in sql for sql in statements)
         assert all("crawl_tasks.payload" not in sql and "crawl_tasks.checkpoint" not in sql for sql in statements)
 
 
 def test_attempt_and_lease_overflows_are_explicit(analytics_engine, monkeypatch):
-    monkeypatch.setattr(collection_monitor, "MAX_ATTEMPTS", 2)
     monkeypatch.setattr(collection_monitor, "MAX_LEASES", 2)
     with Session(analytics_engine) as db:
         for identifier in range(1, 5):
             task(db, identifier, status=TaskStatus.RUNNING,
                  lease_expires_at=NOW + timedelta(seconds=identifier - 2))
             attempt(db, identifier, identifier, finish=NOW - timedelta(seconds=identifier))
+        publish_statistics(db)
         result = read_monitor(db, Settings(), stamp=NOW)
-        assert result["attempts"]["truncated"] and result["attempts"]["total"] == 2
+        assert not result["attempts"]["truncated"] and result["attempts"]["total"] == 4
         assert result["leases"]["truncated"] and result["leases"]["expired"] == 2
         assert result["leases"]["active"] == 0
 
@@ -147,6 +168,10 @@ def test_monitor_route_validates_window_and_coalesces_repeated_reads(analytics_e
         assert first.headers["cache-control"] == "no-store"
         assert first.json()["runtime"]["status"] == "not_configured"
         assert len(calls) == 1
+        assert client.get("/api/v1/collections/monitor?task_group=invalid").status_code == 422
+        local = client.get("/api/v1/collections/monitor?task_group=local")
+        assert local.status_code == 200 and local.json()["task_group"] == "local"
+        assert len(calls) == 2
 
 
 def test_monitor_cache_cancellation_does_not_cancel_other_waiters():
@@ -317,25 +342,30 @@ def test_monitor_migration_matches_model():
     assert Path("migrations/013_collection_monitor_indexes.sql").read_text(encoding="utf-8") == additive_sql()
 
 
-def test_mysql_recent_attempts_use_timestamp_index_without_filesort(session):
-    task(session, 1)
-    attempt(session, 1, 1)
-    statements = []
-    engine = session.get_bind()
-    def capture(conn, cursor, statement, parameters, *args):
-        if "ix_crawl_attempts_monitor" in statement and not statement.startswith("EXPLAIN"):
-            statements.append((statement, parameters))
-    event.listen(engine, "before_cursor_execute", capture)
-    try:
-        result = read_monitor(session, Settings(), stamp=NOW)
-    finally:
-        event.remove(engine, "before_cursor_execute", capture)
-    assert result["attempts"]["total"] == 1
-    sql, parameters = statements[0]
-    plan = session.connection().exec_driver_sql("EXPLAIN " + sql, parameters).mappings().all()
-    assert plan[0]["table"] == "crawl_attempts"
-    assert plan[0]["key"] == "ix_crawl_attempts_monitor"
-    assert all("filesort" not in (row["Extra"] or "").lower() for row in plan)
+def test_mysql_recent_attempts_use_timestamp_index_without_filesort(isolated_factory):
+    # Source completion IDs must never be reused in a database. Other fixtures
+    # intentionally reuse synthetic IDs; this proof owns a fresh schema.
+    with isolated_factory.begin() as session:
+        task(session, 1)
+        attempt(session, 1, 1)
+        activate(session, Settings(), stamp=NOW)
+        statements = []
+        engine = session.get_bind()
+        def capture(conn, cursor, statement, parameters, *args):
+            if "ix_crawl_attempts_monitor" in statement and not statement.startswith("EXPLAIN"):
+                statements.append((statement, parameters))
+        event.listen(engine, "before_cursor_execute", capture)
+        try:
+            advance_rollups(session, Settings(), stamp=NOW, force_publish=True)
+            result = read_monitor(session, Settings(), stamp=NOW)
+        finally:
+            event.remove(engine, "before_cursor_execute", capture)
+        assert result["attempts"]["total"] == 1
+        sql, parameters = statements[0]
+        plan = session.connection().exec_driver_sql("EXPLAIN " + sql, parameters).mappings().all()
+        assert plan[0]["table"] == "crawl_attempts"
+        assert plan[0]["key"] == "ix_crawl_attempts_monitor"
+        assert all("filesort" not in (row["Extra"] or "").lower() for row in plan)
 
 
 def test_monitor_native_async_api_has_no_event_loop_or_greenlet_mismatch(mysql_engine):

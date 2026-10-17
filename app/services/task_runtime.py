@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session
 from app.models import CrawlAttempt, CrawlTask, TaskStatus, TaskType
 from app.queue.retry_policy import Failure, retry_delay
 from app.settings import Settings
+from app.services.collection_rollups import record_completed_attempt
 
 
 class LeaseLost(RuntimeError):
@@ -55,12 +56,18 @@ def claim_task(session: Session, task_id: str, task_type: TaskType, worker_id: s
     from app.services.collection_management import LOCAL_TYPES, is_collection_paused
     if task_type not in LOCAL_TYPES and is_collection_paused(session, settings, lock=True):
         return None
+    from app.services.collection_launch_control import lock_launch_scope
+    launch_allowed = lock_launch_scope(session, settings, task_id)
     task = session.scalar(select(CrawlTask).where(
         CrawlTask.task_id == task_id, CrawlTask.task_type == task_type,
         CrawlTask.platform == settings.platform, CrawlTask.region == settings.region,
     ).with_for_update().execution_options(populate_existing=True))
     now = database_now(session)
     if task is None or task.status not in {TaskStatus.PENDING, TaskStatus.RETRY_WAITING, TaskStatus.ABANDONED}:
+        return None
+    if not launch_allowed and task.lease_token is None:
+        task.status, task.finished_at = TaskStatus.CANCELLED, now
+        session.flush()
         return None
     if task.available_at > now or task.attempt_count >= task.max_attempts or task.lease_token is not None:
         return None
@@ -132,6 +139,7 @@ def finalize_task(session: Session, lease: TaskLease, settings: Settings, *, res
     task.finished_at = now if task.status in {TaskStatus.SUCCEEDED, TaskStatus.DEAD} else None
     task.lease_token = task.lease_expires_at = None
     session.flush()
+    record_completed_attempt(session, task, attempt)
     return task.status
 
 
@@ -151,6 +159,7 @@ def recover_expired_leases(session: Session, settings: Settings, *, limit: int =
         if attempt is not None and attempt.succeeded is None:
             attempt.succeeded, attempt.finished_at = False, now
             attempt.error_type, attempt.error_message = "lease_expired", "Worker 租约到期，任务由调度器恢复。"
+            record_completed_attempt(session, task, attempt)
         task.status = TaskStatus.ABANDONED if task.attempt_count < task.max_attempts else TaskStatus.DEAD
         task.last_error = "Worker 租约到期，已保留检查点和历史尝试。"
         task.available_at = now + timedelta(seconds=settings.retry_base_seconds)

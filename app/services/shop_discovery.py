@@ -67,20 +67,25 @@ def finish_identity_task(session, task, snapshot, evidence_path, *, success, err
     task.last_error = error
     task.checkpoint = {"source_url": snapshot.final_url, "response_hash": snapshot.response_hash,
                        "evidence_path": evidence_path, "outcome": "resolved" if success else "manual_review"}
-    session.add(CrawlAttempt(
+    attempt = CrawlAttempt(
         task_id=task.id, attempt_no=task.attempt_count, worker_id=task.worker_id,
         request_url=snapshot.final_url, response_status=snapshot.status,
         response_bytes=snapshot.response_bytes, response_hash=snapshot.response_hash,
         latency_ms=snapshot.latency_ms, evidence_path=evidence_path,
         started_at=began, finished_at=now, succeeded=success,
         error_type=None if success else "ambiguous_identity", error_message=error,
-    ))
+    )
+    session.add(attempt)
+    session.flush()
+    from app.services.collection_rollups import record_completed_attempt
+    record_completed_attempt(session, task, attempt)
 
 
 def resolve_seed_from_snapshot(
     session: Session, seed_id: int, snapshot: PublicPageSnapshot, evidence_path: str,
     *, verified_store_entry: bool = False,
     runtime_lease_token: str | None = None,
+    runtime_task_id: str | None = None,
 ) -> tuple[str, bool]:
     """No HTTP inside the transaction. Only pending initial tasks may be completed."""
     seed = session.scalar(select(SeedShopObservation).where(
@@ -100,10 +105,12 @@ def resolve_seed_from_snapshot(
     elif public_url(seed.source_url) != public_url(snapshot.source_url):
         return "source_mismatch", False
     task = session.scalar(select(CrawlTask).where(
-        CrawlTask.idempotency_key == seed_task_key(seed.row_hash)
+        CrawlTask.task_id == runtime_task_id if runtime_task_id is not None else CrawlTask.idempotency_key == seed_task_key(seed.row_hash)
     ).with_for_update())
     managed = runtime_lease_token is not None
-    if task is None or (managed and (
+    if task is None or task.platform != seed.platform or task.region != seed.region or (
+        task.task_type != TaskType.SHOP_DISCOVERY or task.resource_type != ResourceType.SEED or task.resource_id != str(seed.id)
+    ) or (runtime_task_id is not None and (not managed or task.payload.get("seed_row_hash") != seed.row_hash)) or (managed and (
         task.status != TaskStatus.RUNNING or task.lease_token != runtime_lease_token
     )) or (not managed and task.status != TaskStatus.PENDING):
         return "task_not_pending", False
@@ -157,7 +164,16 @@ def resolve_seed_from_snapshot(
     if not managed:
         finish_identity_task(session, task, snapshot, evidence_path, success=True)
     created = ensure_product_discovery_task(session, shop, snapshot.final_url, datetime.now(timezone.utc))
+    child_keys = [product_discovery_key(shop)]
     if shop.canonical_url and shop_id_from_url(shop.canonical_url) == shop.platform_shop_id:
-        ensure_shop_profile_task(session, shop, shop_profile_window(datetime.now(timezone.utc), 86400))
+        from app.services.shop_profile import shop_profile_task_key
+        window = shop_profile_window(datetime.now(timezone.utc), 86400)
+        ensure_shop_profile_task(session, shop, window)
+        child_keys.append(shop_profile_task_key(shop, window))
     session.flush()
+    if (task.payload or {}).get("collection_tracked"):
+        from app.services.collection_intake import inherit_launch_tasks
+        children = session.scalars(select(CrawlTask).where(CrawlTask.idempotency_key.in_(child_keys)).order_by(CrawlTask.id)
+            .with_for_update()).all()
+        inherit_launch_tasks(session, task, children)
     return "resolved", created

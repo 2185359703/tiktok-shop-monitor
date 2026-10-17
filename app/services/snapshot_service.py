@@ -115,7 +115,9 @@ def persist_snapshot(session, task, response, *, update_current=True, interval_s
     ).with_for_update())
     if existing is not None:
         # First valid observation in a logical window is immutable, even if a replay differs.
-        _, created = ensure_change_task(session, product, existing)
+        change_task, created = ensure_change_task(session, product, existing)
+        from app.services.collection_intake import inherit_launch_tasks
+        inherit_launch_tasks(session, task, [change_task])
         return {"snapshot_id": str(existing.id), "snapshots_written": 0, "variant_snapshots_written": 0,
                 "change_task_created": created, "window_already_saved": True}
     latest = session.scalar(select(ProductSnapshot).where(ProductSnapshot.product_id == product.id,
@@ -148,7 +150,9 @@ def persist_snapshot(session, task, response, *, update_current=True, interval_s
              **{field: getattr(value, field) for field in ("currency", "price", "original_price", "stock_status", "available_quantity", "variant_payload_hash")}}
             for value in detail.variants]
     session.execute(insert(VariantSnapshot).values(rows))
-    _, created = ensure_change_task(session, product, snapshot)
+    change_task, created = ensure_change_task(session, product, snapshot)
+    from app.services.collection_intake import inherit_launch_tasks
+    inherit_launch_tasks(session, task, [change_task])
     if update_current and product.last_success_at == response.captured_at:
         product.next_capture_at = utc_window(response.captured_at, interval_seconds) + timedelta(seconds=interval_seconds)
     session.flush()

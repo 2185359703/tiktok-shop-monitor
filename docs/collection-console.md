@@ -1,5 +1,7 @@
 # 采集管理与采集监控
 
+本文记录首版 `c821118` 的实现与发布证据。当前扩展版的操作、完整窗口统计、批次取消和持久告警见 [采集控制台扩展版](collection-console-v2.md)。下文的两万条抽样与八秒冷读是首版历史口径。
+
 采集控制台复用现有 FastAPI、MySQL、RabbitMQ、Redis 和 Worker，不再增加一套调度系统。入口为 `#collections`（采集管理）、`#collection-monitor`（采集监控）；`#tasks` 继续提供任务筛选与执行尝试详情。
 
 ## 管理能力
