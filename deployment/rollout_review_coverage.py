@@ -4,6 +4,7 @@ import argparse
 from datetime import datetime, timezone
 import fcntl
 import json
+import os
 from pathlib import Path
 import re
 import subprocess
@@ -31,9 +32,13 @@ def main():
     parser.add_argument("--base-image", required=True)
     parser.add_argument("--commit", required=True)
     parser.add_argument("--execute", action="store_true")
+    parser.add_argument("--resume", action="store_true", help="Continue a partial rollout of this same review image.")
     args = parser.parse_args()
     if not re.fullmatch(r"[a-f0-9]{40}", args.commit) or not args.image.startswith("tiktok-shop-monitor:reviews-"):
         raise ValueError("Expected a committed project review image.")
+    # The older base compose file requires this even when its service images
+    # are overridden by the current live compose overlay.
+    os.environ["APP_IMAGE"] = args.image
     target = json.loads(run(["docker", "image", "inspect", args.image]))[0]
     if target["Config"]["Labels"].get("org.opencontainers.image.revision") != args.commit:
         raise ValueError("Image revision does not match the reviewed commit.")
@@ -42,7 +47,8 @@ def main():
     with (evidence / "async-rollout.lock").open("a") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
         before = workers()
-        if len(before) != 2 or any(row["Config"]["Image"] != args.base_image for row in before):
+        allowed = {args.base_image, args.image} if args.resume else {args.base_image}
+        if len(before) != 2 or any(row["Config"]["Image"] not in allowed for row in before):
             raise ValueError("Expected exactly two running workers on the inspected base image.")
         labels = before[0]["Config"]["Labels"]
         files = labels["com.docker.compose.project.config_files"].split(",")
@@ -59,8 +65,11 @@ def main():
             compose.extend(["-f", file])
         compose.extend(["--env-file", env_file])
         config = json.loads(overlay.read_text())
-        if config["services"]["worker"]["image"] != args.base_image:
+        if config["services"]["worker"]["image"] != (args.image if args.resume else args.base_image):
             raise ValueError("Configured worker image has changed.")
+        # Resolve required variables and validate mounts before stopping any
+        # healthy consumer, including during a resumed release.
+        run([*compose, "config", "--quiet"])
         print(json.dumps({"phase": "verified", "commit": args.commit, "image": args.image,
                           "workers": [row["Name"] for row in before], "execute": args.execute}), flush=True)
         if not args.execute:
@@ -69,6 +78,8 @@ def main():
         config["services"]["worker"]["image"] = args.image
         overlay.write_text(json.dumps(config, indent=2) + "\n")
         for old in before:
+            if old["Image"] == target["Id"]:
+                continue
             run(["docker", "stop", "--time", "150", old["Id"]])
             run(["docker", "rm", old["Id"]])
             run([*compose, "up", "-d", "--no-deps", "--no-build", "--no-recreate", "--scale", "worker=2", "worker"])
