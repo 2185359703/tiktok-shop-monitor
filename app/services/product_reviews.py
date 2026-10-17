@@ -55,7 +55,7 @@ def ensure_review_task(session, settings, product_id, *, max_pages=None, initial
     if product is None:
         raise ValueError("product_not_found")
     if initial_only:
-        if product.last_success_at is None or not product.review_count:
+        if product.last_success_at is None or product.review_count == 0:
             return None, False
         # The product lock serializes this check with manual collection and
         # other detail workers. Do not reopen an exhausted initial collection
@@ -146,7 +146,7 @@ def enqueue_initial_review_tasks(session, settings, product_ids):
     now, values = database_now(session), []
     for product_id in ids:
         product = products[product_id]
-        if str(product_id) in existing or product.last_success_at is None or not product.review_count:
+        if str(product_id) in existing or product.last_success_at is None or product.review_count == 0:
             continue
         shop = shops.get(product.shop_id)
         if (shop is None or shop.platform != product.platform or shop.region != product.region
