@@ -21,10 +21,11 @@ from pathlib import Path
 
 SERVICES = ("api", "worker", "scheduler", "collection")
 ANALYTICS_SERVICES = ("analytics", "analytics-summaries", "analytics-heavy")
-UPGRADE_MIGRATIONS = ("scripts.migrate_analytics_rollups", "scripts.migrate_recent_index",
-                      "scripts.migrate_collection_management", "scripts.migrate_collection_monitor_indexes",
+# Repair existing collection columns before analytics validates every model table.
+UPGRADE_MIGRATIONS = ("scripts.migrate_collection_management", "scripts.migrate_collection_monitor_indexes",
                       "scripts.migrate_collection_plan_archive", "scripts.migrate_collection_monitor_rollups",
-                      "scripts.migrate_collection_launches", "scripts.migrate_collection_alerts")
+                      "scripts.migrate_collection_launches", "scripts.migrate_collection_alerts",
+                      "scripts.migrate_analytics_rollups", "scripts.migrate_recent_index")
 
 
 def upgrade_role_ready(name, items):

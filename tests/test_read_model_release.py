@@ -80,6 +80,65 @@ def test_interrupted_upgrade_preserves_original_rollback_snapshot(release, monke
     assert release.overlay.read_text() == '{"staging": true}\n'
 
 
+def test_upgrade_repairs_v1_collection_columns_before_strict_schema_check(release, monkeypatch, mysql_engine):
+    import importlib
+    import io
+    from contextlib import redirect_stdout
+
+    from app.storage.schema import schema_drift
+    from scripts import migrate_analytics_rollups, migrate_collection_plan_archive
+
+    # Model the deployed 012 table: later additive tables may already exist,
+    # but the existing plan table still needs 015 before any full-schema check.
+    with mysql_engine.begin() as connection:
+        connection.exec_driver_sql("ALTER TABLE collection_plans DROP COLUMN archived_at")
+    monkeypatch.setattr(migrate_analytics_rollups, "make_engine", lambda: mysql_engine)
+    try:
+        with pytest.raises(ValueError, match="existing schema has drift"):
+            migrate_analytics_rollups.main(["--check"])
+
+        release.record.clear()
+        original_overlay = '{"services": {"api": {"image": "old-image"}}}\n'
+        release.overlay.write_text(original_overlay)
+        previous = release.containers
+        monkeypatch.setattr(release, "containers", lambda name: [
+            {**item, "Image": "old-image-id", "NetworkSettings": {"Networks": {"fixture-network": {}}}}
+            for item in previous(name)])
+        monkeypatch.setattr(release, "read", lambda *args, **kwargs: {"ready": True})
+        monkeypatch.setattr(release, "runtime_config", lambda api: {})
+        migrated, started = [], []
+
+        def run(arguments, **kwargs):
+            if arguments[:3] == ["docker", "image", "inspect"]:
+                return release.commit
+            assert arguments[:3] == ["docker", "run", "--rm"]
+            name = arguments[arguments.index("-m") + 1]
+            module = importlib.import_module(name)
+            monkeypatch.setattr(module, "make_engine", lambda: mysql_engine)
+            output = io.StringIO()
+            with redirect_stdout(output):
+                assert module.main(["--execute"]) == 0
+            migrated.append(name)
+            return output.getvalue().strip()
+
+        def up(*services, **kwargs):
+            assert schema_drift(mysql_engine) == []
+            assert "scripts.migrate_analytics_rollups" in migrated
+            started.extend(services)
+
+        monkeypatch.setattr(release, "run", run)
+        monkeypatch.setattr(release, "up", up)
+        release.upgrade()
+        assert release.record["phase"] == "warming"
+        assert started == ["analytics", "analytics-summaries", "analytics-heavy", "api-candidate"]
+        assert (release.evidence / "previous-live-overlay.json").read_text() == original_overlay
+        assert migrate_analytics_rollups.main(["--check"]) == 0
+    finally:
+        # The session-scoped disposable schema must be current for later tests,
+        # including when the original ordering reproduces the deployment error.
+        migrate_collection_plan_archive.migrate(mysql_engine, execute=True)
+
+
 def test_release_cannot_switch_before_backfill_finishes(release, monkeypatch):
     monkeypatch.setattr(release, "read", lambda *args, **kwargs: {"ready": False})
     with pytest.raises(ValueError, match="backfill"):
