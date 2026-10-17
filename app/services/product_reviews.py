@@ -4,6 +4,7 @@ from dataclasses import asdict
 from uuid import UUID, uuid4
 
 from sqlalchemy import inspect, insert, select
+from sqlalchemy.exc import OperationalError
 
 from app.crawlers.product_list import product_id_from_url
 from app.crawlers.product_reviews import REVIEW_SOURCE_VERSION
@@ -18,6 +19,30 @@ def reviews_available(session):
     return inspect(session.connection()).has_table(ProductReview.__tablename__)
 
 
+class ReviewCollectionBusy(ValueError):
+    def __init__(self):
+        super().__init__("review_collection_busy")
+
+
+def _existing_review_query(settings, product_ids):
+    return select(CrawlTask).where(
+        CrawlTask.platform == settings.platform, CrawlTask.region == settings.region,
+        CrawlTask.task_type == TaskType.PRODUCT_REVIEWS, CrawlTask.resource_type == ResourceType.PRODUCT,
+        CrawlTask.resource_id.in_([str(value) for value in product_ids]),
+    ).with_hint(CrawlTask, "FORCE INDEX (ix_crawl_tasks_resource)", dialect_name="mysql")
+
+
+def _current_review_task(session, query):
+    # Completion owns its task before its product. Never wait for that task
+    # while admission owns the product; NOWAIT still provides a current read.
+    try:
+        return session.scalar(query.with_for_update(nowait=True).execution_options(populate_existing=True))
+    except OperationalError as error:
+        if getattr(error.orig, "args", (None,))[0] == 3572:
+            raise ReviewCollectionBusy() from None
+        raise
+
+
 def ensure_review_task(session, settings, product_id, *, max_pages=None, initial_only=False):
     if initial_only and TaskType.PRODUCT_REVIEWS not in settings.enabled_task_types:
         return None, False
@@ -25,7 +50,8 @@ def ensure_review_task(session, settings, product_id, *, max_pages=None, initial
     if type(max_pages) is not int or not 1 <= max_pages <= 500:
         raise ValueError("评论页数必须为1至500的整数。")
     product = session.scalar(select(Product).where(Product.id == product_id,
-        Product.platform == settings.platform, Product.region == settings.region).with_for_update())
+        Product.platform == settings.platform, Product.region == settings.region).with_for_update()
+        .execution_options(populate_existing=True))
     if product is None:
         raise ValueError("product_not_found")
     if initial_only:
@@ -34,11 +60,13 @@ def ensure_review_task(session, settings, product_id, *, max_pages=None, initial
         # The product lock serializes this check with manual collection and
         # other detail workers. Do not reopen an exhausted initial collection
         # on each later detail observation; explicit retries remain available.
-        previous = session.scalar(select(CrawlTask).where(
-            CrawlTask.platform == product.platform, CrawlTask.region == product.region,
-            CrawlTask.task_type == TaskType.PRODUCT_REVIEWS,
-            CrawlTask.resource_type == ResourceType.PRODUCT, CrawlTask.resource_id == str(product.id),
-        ).order_by(CrawlTask.id.desc()).limit(1).with_for_update())
+        try:
+            previous = _current_review_task(session, _existing_review_query(settings, [product.id])
+                .order_by(CrawlTask.id.desc()).limit(1))
+        except ReviewCollectionBusy:
+            # Automatic admission is optional when another transaction owns
+            # work for this resource. Do not create another initial task.
+            return None, False
         if previous is not None:
             return previous, False
     shop = session.get(Shop, product.shop_id)
@@ -46,8 +74,8 @@ def ensure_review_task(session, settings, product_id, *, max_pages=None, initial
             or product_id_from_url(product.product_url) != product.platform_product_id):
         raise ValueError("invalid_review_product")
     values = _review_task_values(product, shop, database_now(session), max_pages)
-    previous = session.scalar(select(CrawlTask).where(
-        CrawlTask.idempotency_key == values["idempotency_key"]).with_for_update())
+    previous = _current_review_task(session, select(CrawlTask).where(
+        CrawlTask.idempotency_key == values["idempotency_key"]))
     if previous:
         return previous, False
     task = CrawlTask(**values)
@@ -95,11 +123,24 @@ def enqueue_initial_review_tasks(session, settings, product_ids):
     ).order_by(Product.id).with_for_update().execution_options(populate_existing=True))}
     if len(products) != len(ids):
         raise ValueError("product_not_found")
-    existing = set(session.scalars(select(CrawlTask.resource_id).where(
-        CrawlTask.platform == settings.platform, CrawlTask.region == settings.region,
-        CrawlTask.task_type == TaskType.PRODUCT_REVIEWS, CrawlTask.resource_type == ResourceType.PRODUCT,
-        CrawlTask.resource_id.in_([str(value) for value in ids]),
-    ).with_for_update()))
+    try:
+        existing = set(session.scalars(_existing_review_query(settings, ids).with_only_columns(CrawlTask.resource_id)
+            .with_for_update(nowait=True)))
+    except OperationalError as error:
+        if getattr(error.orig, "args", (None,))[0] != 3572:
+            raise
+        # Preserve the bulk fast path. Only contention needs bounded probes,
+        # allowing unrelated products in this batch to receive initial work.
+        existing = set()
+        for product_id in ids:
+            try:
+                previous = _current_review_task(session, _existing_review_query(settings, [product_id])
+                    .with_only_columns(CrawlTask.id).limit(1))
+            except ReviewCollectionBusy:
+                existing.add(str(product_id))
+            else:
+                if previous is not None:
+                    existing.add(str(product_id))
     shops = {row.id: row for row in session.scalars(select(Shop).where(
         Shop.id.in_({row.shop_id for row in products.values()})))}
     now, values = database_now(session), []

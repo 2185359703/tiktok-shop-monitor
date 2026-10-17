@@ -3,6 +3,9 @@ from pathlib import Path
 from uuid import uuid4
 from datetime import datetime, timezone
 from threading import Event
+import asyncio
+import importlib
+from types import SimpleNamespace
 
 import pytest
 from fastapi.testclient import TestClient
@@ -181,6 +184,37 @@ def test_seed_retry_uses_its_own_lease_and_preserves_root_failure(session, monke
     assert summary["status"] == "queued"
     same, created = retry_task(session, CONFIG, original.task_id)
     assert not created and same.id == child.id
+
+
+@pytest.mark.parametrize("native_async", [False, True])
+def test_new_automatic_reviews_belong_to_the_detail_launch(session, monkeypatch, tmp_path, native_async):
+    shop = store(session)
+    item = product(session, shop)
+    item.last_success_at, item.review_count = database_now(session), 4
+    session.flush()
+    launch, _ = create_launch(session, CONFIG, definition([item.id], kind=TaskType.PRODUCT_DETAIL), uuid4())
+    task = roots(session, launch)[0]
+    lease = claim_task(session, task.task_id, task.task_type, "review-lineage-fixture", CONFIG)
+    module = importlib.import_module("app.workers.async_handlers" if native_async else "app.workers.handlers")
+    page = SimpleNamespace(final_url=item.product_url, status=200, response_bytes=100, response_hash="c" * 64,
+        latency_ms=10, save_evidence=lambda directory: tmp_path / "synthetic-review-lineage.json")
+    class Adapter:
+        def __init__(self, *args): pass
+        def fetch_product_detail(self, *args): return page
+    if native_async:
+        async def fetch(*args): return page
+        Adapter.fetch_product_detail = fetch
+    monkeypatch.setattr(module, "TikTokShopAdapter", Adapter)
+    monkeypatch.setattr(module.ProductDetailHandler, "commit_observation", lambda *args: {})
+    context = SimpleNamespace(settings=replace(CONFIG, evidence_directory=tmp_path), gate=None, stop=Event())
+    preparation = module.ProductDetailHandler().prepare(lease, context)
+    result = asyncio.run(preparation) if native_async else preparation
+    finalize_task(session, lease, CONFIG, result=result)
+    summary = launch_summary(session, launch)
+    assert summary["root_status_counts"] == {"succeeded": 1}
+    assert summary["descendant_status_counts"] == {"pending": 1} and summary["status"] == "queued"
+    child = session.scalar(select(CrawlTask).where(CrawlTask.task_type == TaskType.PRODUCT_REVIEWS))
+    assert child.payload["collection_tracked"] and child.payload["max_pages"] == 1
 
 
 def test_launch_api_authorization_bounds_history_pagination_and_market_isolation(session, mysql_engine):

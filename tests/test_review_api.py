@@ -5,7 +5,8 @@ from fastapi.testclient import TestClient
 
 from app.api.routes import session_dependency
 from app.api.routes_reviews import router
-from app.models import TaskStatus
+from app.models import TaskStatus, TaskType
+from app.services.product_reviews import ReviewCollectionBusy
 from app.settings import Settings
 
 
@@ -66,3 +67,20 @@ def test_get_never_enqueues_and_post_requires_existing_write_auth(monkeypatch):
     with client_for(DB()) as client:
         assert client.get("/api/v1/products/7/reviews").status_code == 200
         assert client.post("/api/v1/products/7/reviews/collect", json={"max_pages": 3}).status_code == 503
+
+
+def test_busy_collection_is_a_retryable_conflict_and_rolls_back(monkeypatch):
+    rolled_back = []
+    db = DB()
+    db.rollback = lambda: rolled_back.append(True)
+    def busy(*args, **kwargs):
+        raise ReviewCollectionBusy()
+    monkeypatch.setattr("app.api.routes_reviews.reviews_available", lambda db: True)
+    monkeypatch.setattr("app.api.routes_reviews.ensure_review_task", busy)
+    with client_for(db) as client:
+        client.app.state.settings = Settings(enabled_task_types=(TaskType.PRODUCT_REVIEWS,),
+            api_token="test-only-review-busy-write-token")
+        response = client.post("/api/v1/products/7/reviews/collect", json={"max_pages": 1},
+            headers={"Authorization": "Bearer test-only-review-busy-write-token"})
+    assert response.status_code == 409 and response.json() == {"detail": "review_collection_busy"}
+    assert rolled_back == [True]

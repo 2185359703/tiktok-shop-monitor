@@ -6,7 +6,7 @@ from sqlalchemy import func, select
 
 from app.api.routes import After, Db, Limit, require_write_token, scope
 from app.models import CrawlTask, Product, ProductReview, ResourceType, TaskStatus, TaskType
-from app.services.product_reviews import ensure_review_task, reviews_available
+from app.services.product_reviews import ReviewCollectionBusy, ensure_review_task, reviews_available
 
 
 from app.api.async_router import AsyncAPIRouter
@@ -62,6 +62,9 @@ def collect_reviews(product_id: int, body: ReviewCollectionRequest, request: Req
     try:
         task, created = ensure_review_task(db, settings, product_id, max_pages=body.max_pages)
         db.commit()
+    except ReviewCollectionBusy:
+        db.rollback()
+        raise HTTPException(409, "review_collection_busy") from None
     except ValueError as error:
         db.rollback()
         raise HTTPException(404 if str(error) == "product_not_found" else 422,

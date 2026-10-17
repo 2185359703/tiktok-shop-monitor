@@ -123,7 +123,7 @@ def test_detail_application_schedules_reviews_in_same_transaction(monkeypatch, t
         Adapter.fetch_product_detail = fetch
     monkeypatch.setattr(module, "TikTokShopAdapter", Adapter)
     monkeypatch.setattr(module.ProductDetailHandler, "commit_observation", lambda *args: {})
-    monkeypatch.setattr(module, "ensure_initial_review_task", lambda db, settings, pid: captured.append((db, pid)))
+    monkeypatch.setattr(module, "ensure_initial_review_task", lambda db, settings, pid: (captured.append((db, pid)), False))
     settings = replace(CONFIG, evidence_directory=tmp_path)
     context = SimpleNamespace(settings=settings, gate=None, stop=None)
     lease = SimpleNamespace(resource_id="17", task_id="test-detail", payload={"product_id": "17",

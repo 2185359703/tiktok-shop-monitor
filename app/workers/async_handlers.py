@@ -218,7 +218,10 @@ class ProductDetailHandler:
         def apply(session, task):
             checkpoint.update(persist_image_observation(session, task, snapshot) if mode in BACKFILL_MODES
                               else self.commit_observation(session, task, snapshot, context))
-            ensure_initial_review_task(session, context.settings, int(task.resource_id))
+            review, created = ensure_initial_review_task(session, context.settings, int(task.resource_id))
+            if created:
+                from app.services.collection_intake import inherit_launch_tasks
+                inherit_launch_tasks(session, task, [review])
 
         return ExecutionResult(apply=apply, checkpoint=checkpoint, request_url=snapshot.final_url,
                                response_status=snapshot.status, response_bytes=snapshot.response_bytes,
