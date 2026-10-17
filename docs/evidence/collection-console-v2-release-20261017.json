@@ -1,0 +1,126 @@
+{
+  "deployed_code_commit": "2926c62ee7990b6c737c390d4db80892b8f5cd9a",
+  "release_id": "frontend-20261017-mature-2926c62",
+  "source_archive_sha256": "8123a0d75f1082e333dfcd5854b6338cd1c91c0210bbaf54ff28e6e83e201973",
+  "verification_observed_at": "2026-10-17T07:59:13.350955+00:00",
+  "verification": "passed",
+  "public_urls": [
+    "https://shopscope-monitor.top/#collections",
+    "https://shopscope-monitor.top/#collection-monitor",
+    "http://34.20.217.151/shopscope/#collections"
+  ],
+  "tests": {
+    "full_python_suite": {
+      "commit": "371f58c14db06f35445c0400ffba987606e68a44",
+      "passed": 816,
+      "skipped": 2,
+      "skipped_reason": "A separate local Redis integration service was not configured"
+    },
+    "final_followup_checks": {
+      "node_collection_and_query_cache_passed": 34,
+      "deployment_passed": 17,
+      "frontend_and_publisher_passed": 15,
+      "frontend_build": "passed",
+      "git_diff_check": "passed",
+      "old_schema_upgrade_regression": "Real MySQL reproduced the old drift error and passed all migrations in the corrected order"
+    },
+    "local_synthetic_browser_flows": [
+      "cross_page_resource_selection", "draft_restore", "create_once_plan",
+      "name_only_patch_preserves_schedule", "slow_submit_close_protection",
+      "archive_restore_disabled", "normalized_shop_intake", "product_discovery_budget",
+      "durable_batch_cancel", "cancelled_batch_retry_disabled",
+      "persistent_alert_acknowledgement_and_history", "source_local_window_switching"
+    ],
+    "production_browser": {
+      "browser": "Microsoft Edge via Playwright CLI",
+      "root_and_prefix_routes": "passed",
+      "prefix_asset_path": "/shopscope/ui-assets/app.bundle.js",
+      "mobile_viewport_width": 390,
+      "mobile_document_width": 390,
+      "desktop_viewport": [1440, 1100],
+      "post_reload_observation_started_at": "2026-10-17T08:00:57.814Z",
+      "post_reload_observation_seconds": 137,
+      "post_reload_console_errors_observed": 0,
+      "post_reload_console_warnings_observed": 0,
+      "earlier_initialization_session_network_errors": 24,
+      "earlier_network_error_types": ["ERR_TIMED_OUT", "ERR_CONNECTION_CLOSED"],
+      "network_error_cause": "Not independently isolated; final post-reload polling did not reproduce these errors"
+    }
+  },
+  "deployment": {
+    "api_healthy": true,
+    "bootstrap_ready": true,
+    "collection_batch": "exited normally with code 0, target image, not OOM killed",
+    "migration_checks_ready": [
+      "collection_management", "collection_monitor_indexes", "collection_plan_archive",
+      "collection_monitor_rollups", "collection_launches", "collection_alerts"
+    ],
+    "running_workers": 2,
+    "worker_concurrency_each": 4,
+    "running_schedulers": 1,
+    "scheduler_last_success_at": "2026-10-17T07:58:59.392686+00:00",
+    "heartbeat_age_seconds_max": 8.2,
+    "minimum_source_interval_seconds": 1.0,
+    "analytics_roles": ["projections", "summaries", "heavy"],
+    "unchanged_infrastructure_container_ids": {
+      "mysql": "a7b65fa435c4", "redis": "5d5ab11de884", "rabbitmq": "e63de9f1f1d5",
+      "detail-egress": "ac7b508ea1ff", "prometheus": "092306c9f17a"
+    },
+    "mysql_redis_rabbitmq_health_at_verification": "healthy",
+    "rabbitmq_earlier_health": "Probe timed out during CPU saturation; ping, local alarm checks and AMQP Connection.Start succeeded without recreating the broker",
+    "production_test_launches_or_control_writes": 0,
+    "product_snapshot_collector_enabled": false
+  },
+  "complete_monitoring": {
+    "backfill_complete": true,
+    "initial_fixed_25h_historical_attempts": 44707,
+    "temporary_assistance": {"cpus": 0.5, "memory_mib": 256, "budget_seconds": 600, "additional_scanned": 23000, "additional_projected": 23000, "exit": "budget reached; normal background completed the remainder"},
+    "all_12_window_group_snapshots_ready": true,
+    "windows_minutes": [15, 60, 360, 1440],
+    "task_groups": ["source", "local", "all"],
+    "count_method": "exact",
+    "mean_method": "exact",
+    "p95_method": "histogram_upper_bound",
+    "p95_max_relative_error": 0.1,
+    "truncated": false,
+    "source_sql_comparison_window": {"since": "2026-10-16T07:59:00+00:00", "until_exclusive": "2026-10-17T07:59:00+00:00"},
+    "source_sql_comparison": {
+      "source": {"total": 27668, "succeeded": 20471, "mean_ms": 12488.980},
+      "local": {"total": 12800, "succeeded": 12800, "mean_ms": 802.054},
+      "all": {"total": 40468, "succeeded": 33271, "mean_ms": 8792.413},
+      "count_success_mean_match": true,
+      "mean_tolerance_ms": 0.01
+    },
+    "raw_attempt_aggregate_by_type": [
+      {"type": "product_detail", "total": 22793, "succeeded": 16656, "duration_us": 303311352049},
+      {"type": "change_detection", "total": 12799, "succeeded": 12799, "duration_us": 9998701312},
+      {"type": "report_generation", "total": 1, "succeeded": 1, "duration_us": 267585809},
+      {"type": "shop_profile", "total": 127, "succeeded": 100, "duration_us": 4085011636},
+      {"type": "product_reviews", "total": 4748, "succeeded": 3715, "duration_us": 38148721547}
+    ]
+  },
+  "persistent_alerts": {
+    "evaluation": "fresh", "runtime_source": "available", "statistics_source": "ready",
+    "last_evaluated_at": "2026-10-17T07:59:06.891484+00:00",
+    "active_condition": "high_failure_rate",
+    "external_notifications_configured": false
+  },
+  "observed_request_ms": {
+    "server_monitor_24h": 269.0, "server_alerts": 72.0,
+    "server_management_control": 227.6, "server_plans": 301.0,
+    "server_launches": 499.8, "server_resource_picker": 265.8,
+    "server_24h_group_reads": {"source": 1565.4, "local": 2962.6, "all": 3045.3},
+    "public_browser_post_reload_60m": 1378,
+    "public_browser_post_reload_24h_initial": [814, 796, 642],
+    "public_browser_post_reload_24h_later": [3771, 1510, 1927, 4381, 3465]
+  },
+  "boundaries": [
+    "Timings are individual observations, not an SLA or load test; the host had sustained CPU pressure during initialization",
+    "Earlier public browser timeouts are retained above; only the final post-reload observation had zero errors",
+    "Production checks did not create a test plan, trigger a source test collection, cancel production work or acknowledge production alerts",
+    "Source success rate is below 80 percent and correctly alerts; feature verification does not claim every source collection succeeded",
+    "P95 is approximate; task counts, success counts and means were checked against original completed attempts",
+    "Two task-owned local synthetic browser databases were removed; their fixture script can recreate them",
+    "The deployment source and previous live overlay are retained for rollback"
+  ]
+}
